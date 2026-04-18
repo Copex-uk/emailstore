@@ -61,7 +61,7 @@ func main() {
 	}()
 
 	srv := &http.Server{
-		Addr:         "127.0.0.1:" + cfg.Port,
+		Addr:         "0.0.0.0:" + cfg.Port,
 		Handler:      h.Routes(),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
