@@ -61,7 +61,7 @@ func main() {
 	}()
 
 	srv := &http.Server{
-		Addr:         "0.0.0.0:" + cfg.Port,
+		Addr:         cfg.Host + ":" + cfg.Port,
 		Handler:      h.Routes(),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -72,7 +72,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("emailstore listening on http://127.0.0.1:%s", cfg.Port)
+		log.Printf("emailstore listening on http://%s:%s", cfg.Host, cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server: %v", err)
 		}

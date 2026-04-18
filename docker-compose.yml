@@ -1,9 +1,6 @@
 services:
   emailstore:
-    # Pull the pre-built image from GitHub Container Registry.
-    # Change this to match your GitHub username/org.
-    # To build locally instead, replace 'image:' with 'build: .'
-    image: ghcr.io/Copex-uk/emailstore:latest
+    image: ghcr.io/copex-uk/emailstore:latest
     container_name: emailstore
     restart: unless-stopped
 
@@ -16,8 +13,14 @@ services:
     environment:
       - PORT=8080
       - DATA_DIR=/app/data
+      # Listen on all interfaces inside the container so Docker port mapping works.
+      # External access is still controlled by the ports: binding above.
+      - BIND_HOST=0.0.0.0
 
-#    read_only: true
+    # Run as the same UID/GID defined in the Dockerfile (10001)
+    user: "10001:10001"
+
+    read_only: true
     tmpfs:
       - /tmp:size=64m
     security_opt:

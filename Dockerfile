@@ -30,11 +30,9 @@ COPY --from=builder /build/templates   ./templates
 COPY --from=builder /build/static      ./static
 
 # Pre-create the data directory with correct permissions
-RUN mkdir -p /app/data/attachments
-
-# Run as non-root — principle of least privilege
 RUN addgroup -S -g 10001 emailstore && \
     adduser  -S -u 10001 -G emailstore emailstore && \
+    mkdir -p /app/data/attachments && \
     chown -R emailstore:emailstore /app
 
 USER emailstore

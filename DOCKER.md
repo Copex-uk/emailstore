@@ -15,7 +15,10 @@
 Either extract the tar archive or clone the repo into a directory:
 
 ```bash
-mkdir emailstore && cd emailstore
+mkdir -p emailstore/data/attachments && cd emailstore
+
+# Fix permissions so the container (UID 10001) can write to the data directory
+sudo chown -R 10001:10001 data/
 tar -xzf emailstore.tar.gz --strip-components=1
 ```
 
