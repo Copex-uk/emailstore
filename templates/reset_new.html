@@ -1,0 +1,27 @@
+{{define "reset_new.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>New password — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Set new password</h1>
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+    <form method="POST" action="/reset-password/new" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="token" value="{{.Token}}">
+      <label class="field-label">New password
+        <input type="password" name="password" minlength="8" required autofocus class="field-input">
+      </label>
+      <label class="field-label">Confirm password
+        <input type="password" name="confirm" minlength="8" required class="field-input">
+      </label>
+      <button type="submit" class="btn btn-primary btn-full">Set password</button>
+    </form>
+  </div>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

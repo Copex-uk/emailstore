@@ -1,0 +1,39 @@
+services:
+  emailstore:
+    # Pull the pre-built image from GitHub Container Registry.
+    # Change this to match your GitHub username/org.
+    # To build locally instead, replace 'image:' with 'build: .'
+    image: ghcr.io/YOURUSERNAME/emailstore:latest
+    container_name: emailstore
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      - ./data:/app/data
+
+    environment:
+      - PORT=8080
+      - DATA_DIR=/app/data
+
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

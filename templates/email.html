@@ -1,0 +1,64 @@
+{{define "email.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Email.Subject}} — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      {{range .Categories}}
+      <li><a href="/?category={{.Slug}}" class="nav-item">
+        <span class="cat-dot" style="background:{{.Color}}"></span>{{.Name}}
+      </a></li>
+      {{end}}
+    </ul>
+    <div class="sidebar-footer">
+      <a href="/settings" class="nav-item">Settings</a>
+      <form method="POST" action="/logout">
+        <button class="btn-link">Sign out</button>
+      </form>
+    </div>
+  </nav>
+  <main class="email-view">
+    <div class="email-header">
+      <a href="/" class="btn btn-sm">← Back</a>
+      <h1>{{.Email.Subject}}</h1>
+      <div class="email-meta">
+        <span>From: <strong>{{.Email.SenderName}}</strong> &lt;{{.Email.SenderEmail}}&gt;</span>
+        <span>{{.Email.ReceivedAt.Format "Mon, 2 Jan 2006 15:04"}}</span>
+      </div>
+      <form method="POST" action="/emails/{{.Email.ID}}/category" class="category-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <select name="category_id" onchange="this.form.submit()">
+          <option value="">— move to category —</option>
+          {{range .Categories}}
+          <option value="{{.ID}}" {{if eq $.Email.CategoryID.Int64 .ID}}selected{{end}}>{{.Name}}</option>
+          {{end}}
+        </select>
+      </form>
+    </div>
+    <div class="email-body">
+      {{if .Email.BodyHTML}}
+        <iframe class="email-iframe" srcdoc="{{.Email.BodyHTML}}" sandbox></iframe>
+      {{else}}
+        <pre class="email-text">{{.Email.BodyText}}</pre>
+      {{end}}
+    </div>
+    {{if .Email.Attachments}}
+    <div class="attachments">
+      <h3>Attachments</h3>
+      {{range .Email.Attachments}}
+      <a href="/attachments/{{.ID}}" class="attachment-link">
+        {{.Filename}} <span class="muted">({{formatBytes .Size}})</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

@@ -1,0 +1,47 @@
+{{define "settings/security.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Security — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      <li><a href="/settings/mailbox" class="nav-item">Mailbox</a></li>
+      <li><a href="/settings/senders" class="nav-item">Allowed senders</a></li>
+      <li><a href="/settings/categories" class="nav-item">Categories</a></li>
+      <li><a href="/settings/policy" class="nav-item">Security policy</a></li>
+      <li><a href="/settings/security" class="nav-item active">Password & session</a></li>
+      <li><a href="/settings/general" class="nav-item">General</a></li>
+    </ul>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+  </nav>
+  <main class="settings-main">
+    <h1>Security</h1>
+    {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+    <form method="POST" action="/settings/security" class="settings-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <h2>Change password</h2>
+      <label>Current password
+        <input type="password" name="current_password">
+      </label>
+      <label>New password
+        <input type="password" name="new_password" minlength="8">
+      </label>
+      <label>Confirm new password
+        <input type="password" name="confirm_password">
+      </label>
+      <h2>Session</h2>
+      <label>Session timeout (minutes)
+        <input type="number" name="session_timeout" value="{{.SessionTimeout}}" min="5" max="10080">
+      </label>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

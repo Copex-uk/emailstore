@@ -1,0 +1,48 @@
+{{define "reset_request.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reset password — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Reset password</h1>
+    <p class="field-hint">Send an email from your configured mailbox address with this exact code as the subject line. The page will advance automatically once the email is received.</p>
+    <div class="reset-code">{{.Code}}</div>
+    <p class="field-hint">Send to: <strong>{{.MailboxUser}}</strong></p>
+    <div id="status" class="reset-status">Waiting for email…</div>
+    <p style="margin-top:1rem;font-size:0.85rem;">
+      <a href="/login">Cancel</a>
+    </p>
+  </div>
+</div>
+<script src="/static/theme.js"></script>
+<script>
+const token = "{{.Token}}";
+let cancelled = false;
+async function poll() {
+  if (cancelled) return;
+  try {
+    const r = await fetch("/reset-password/check?token=" + token);
+    const d = await r.json();
+    if (d.status === "verified") {
+      window.location = "/reset-password/new?token=" + token;
+      return;
+    } else if (d.status === "expired" || d.status === "notfound") {
+      document.getElementById("status").textContent = "Code expired. Please start again.";
+      return;
+    }
+  } catch(e) {}
+  setTimeout(poll, 4000);
+}
+// Cancel after 5 minutes
+setTimeout(() => {
+  cancelled = true;
+  fetch("/reset-password/cancel?token=" + token, {method:"POST"});
+  document.getElementById("status").textContent = "Timed out. Please start again.";
+}, 5 * 60 * 1000);
+poll();
+</script>
+</body></html>{{end}}

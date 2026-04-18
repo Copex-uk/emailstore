@@ -1,0 +1,85 @@
+{{define "settings/policy.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Security Policy — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      <li><a href="/settings/mailbox" class="nav-item">Mailbox</a></li>
+      <li><a href="/settings/senders" class="nav-item">Allowed senders</a></li>
+      <li><a href="/settings/categories" class="nav-item">Categories</a></li>
+      <li><a href="/settings/policy" class="nav-item active">Security policy</a></li>
+      <li><a href="/settings/security" class="nav-item">Password & session</a></li>
+      <li><a href="/settings/general" class="nav-item">General</a></li>
+    </ul>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+  </nav>
+  <main class="settings-main">
+    <h1>Security policy</h1>
+    {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+
+    <p class="muted">Controls how strictly emails are validated before being stored. See the <a href="/help#security">help page</a> for full details.</p>
+
+    <form method="POST" action="/settings/policy" class="settings-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+
+      <fieldset class="radio-group">
+        <legend>Security mode</legend>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="strict" {{if eq .Mode "strict"}}checked{{end}} {{if eq .Mode ""}}checked{{end}}>
+          <span><strong>Strict</strong> — require authorised sender AND valid token (default, recommended)</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="balanced" {{if eq .Mode "balanced"}}checked{{end}}>
+          <span><strong>Balanced</strong> — require authorised sender OR valid token</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="relaxed" {{if eq .Mode "relaxed"}}checked{{end}}>
+          <span><strong>Relaxed</strong> — require authorised sender only, no token needed</span>
+        </label>
+      </fieldset>
+
+      <h2>Token authentication</h2>
+      <label class="checkbox-label">
+        <input type="checkbox" name="require_token" {{if .RequireToken}}checked{{end}}>
+        Require a token in every email
+      </label>
+      <fieldset class="radio-group">
+        <legend>Token location</legend>
+        <label class="radio-label">
+          <input type="radio" name="token_location" value="subject" {{if eq .TokenLocation "subject"}}checked{{end}} {{if eq .TokenLocation ""}}checked{{end}}>
+          Subject line — format: <code>[ES:yourtoken]</code> anywhere in the subject
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="token_location" value="header" {{if eq .TokenLocation "header"}}checked{{end}}>
+          Email header — <code>X-EmailStore-Auth: yourtoken</code>
+        </label>
+      </fieldset>
+      <label>Valid tokens (comma-separated)
+        <input type="text" name="tokens" value="{{.Tokens}}" placeholder="token1, token2, token3">
+        <span class="field-hint">Generate strong random tokens. Example: <code>openssl rand -hex 16</code></span>
+      </label>
+
+      <h2>Size limits</h2>
+      <label>Max email size (MB)
+        <input type="number" name="max_email_mb" value="{{if .MaxEmailMB}}{{.MaxEmailMB}}{{else}}10{{end}}" min="1" max="100">
+      </label>
+      <label>Max attachments per email
+        <input type="number" name="max_attachments" value="{{if .MaxAttachments}}{{.MaxAttachments}}{{else}}5{{end}}" min="0" max="50">
+      </label>
+      <label>Max attachment size (MB)
+        <input type="number" name="max_attach_mb" value="{{if .MaxAttachMB}}{{.MaxAttachMB}}{{else}}5{{end}}" min="1" max="100">
+      </label>
+
+      <button type="submit" class="btn btn-primary">Save policy</button>
+    </form>
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

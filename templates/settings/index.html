@@ -1,0 +1,35 @@
+{{define "settings/index.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Settings — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      <li><a href="/settings/mailbox" class="nav-item">Mailbox</a></li>
+      <li><a href="/settings/senders" class="nav-item">Allowed senders</a></li>
+      <li><a href="/settings/categories" class="nav-item">Categories</a></li>
+      <li><a href="/settings/policy" class="nav-item">Security policy</a></li>
+      <li><a href="/settings/security" class="nav-item">Password & session</a></li>
+      <li><a href="/settings/general" class="nav-item">General</a></li>
+    </ul>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+  </nav>
+  <main class="settings-main">
+    <h1>Settings</h1>
+    <div class="settings-grid">
+      <a href="/settings/mailbox"    class="settings-card"><h3>Mailbox</h3><p>IMAP connection and poll interval</p></a>
+      <a href="/settings/senders"    class="settings-card"><h3>Allowed senders</h3><p>Who can send emails to the store</p></a>
+      <a href="/settings/categories" class="settings-card"><h3>Categories</h3><p>Organise emails into categories</p></a>
+      <a href="/settings/policy"     class="settings-card"><h3>Security policy</h3><p>Modes, tokens, size limits</p></a>
+      <a href="/settings/security"   class="settings-card"><h3>Password</h3><p>Login password and session timeout</p></a>
+      <a href="/settings/general"    class="settings-card"><h3>General</h3><p>Storage and attachment limits</p></a>
+    </div>
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

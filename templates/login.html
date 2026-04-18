@@ -1,0 +1,34 @@
+{{define "login.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>
+  const t = localStorage.getItem('theme');
+  if (t) document.documentElement.setAttribute('data-theme', t);
+</script>
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-card-header">
+      <h1>EmailStore</h1>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme">
+        <span class="theme-icon"></span>
+      </button>
+    </div>
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+    <form method="POST" action="/login" class="login-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="field-label">Password
+        <input type="password" name="password" required autofocus class="field-input">
+      </label>
+      <button type="submit" class="btn btn-primary btn-full">Sign in</button>
+    </form>
+    <p style="margin-top:1rem;font-size:0.85rem;text-align:center;">
+      <a href="/reset-password" style="color:var(--primary)">Forgot password?</a>
+    </p>
+  </div>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

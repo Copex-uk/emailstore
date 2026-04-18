@@ -1,0 +1,65 @@
+{{define "inbox.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inbox — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">EmailStore</span>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button>
+    </div>
+    <ul class="nav-list">
+      <li><a href="/" class="nav-item {{if eq .ActiveSlug ""}}active{{end}}">All emails</a></li>
+      {{range .Categories}}
+      <li>
+        <a href="/?category={{.Slug}}" class="nav-item {{if eq $.ActiveSlug .Slug}}active{{end}}">
+          <span class="cat-dot" style="background:{{.Color}}"></span>
+          {{.Name}}
+          {{with index $.Counts .ID}}<span class="badge">{{.}}</span>{{end}}
+        </a>
+      </li>
+      {{end}}
+    </ul>
+    <div class="sidebar-footer">
+      <a href="/help" class="nav-item">Help</a>
+      <a href="/settings" class="nav-item">Settings</a>
+      <form method="POST" action="/logout">
+        <button class="btn-link">Sign out</button>
+      </form>
+    </div>
+  </nav>
+  <main class="email-list">
+    <div class="list-header">
+      <h2>{{if .ActiveCatName}}{{.ActiveCatName}}{{else}}All emails{{end}}</h2>
+      <div class="list-header-actions">
+        {{if .Polled}}<span class="flash-success">✓ Polled successfully</span>{{end}}
+        <form method="POST" action="/poll" style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <button type="submit" class="btn btn-sm">Poll now</button>
+        </form>
+      </div>
+    </div>
+    {{if not .Emails}}
+    <p class="empty">No emails yet. <a href="/settings/mailbox">Configure your mailbox</a> then click Poll now.</p>
+    {{end}}
+    {{range .Emails}}
+    <a href="/emails/{{.ID}}" class="email-row {{if not .Read}}unread{{end}}">
+      <div class="email-sender">{{if .SenderName}}{{.SenderName}}{{else}}{{.SenderEmail}}{{end}}</div>
+      <div class="email-subject">{{.Subject}}</div>
+      <div class="email-date">{{.ReceivedAt.Format "Jan 2"}}</div>
+    </a>
+    {{end}}
+    {{if gt .Page 1}}
+    <div class="pagination">
+      <a href="?page={{sub .Page 1}}{{if .ActiveSlug}}&category={{.ActiveSlug}}{{end}}" class="btn">← Previous</a>
+      <a href="?page={{add .Page 1}}{{if .ActiveSlug}}&category={{.ActiveSlug}}{{end}}" class="btn">Next →</a>
+    </div>
+    {{end}}
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

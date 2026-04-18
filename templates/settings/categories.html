@@ -1,0 +1,58 @@
+{{define "settings/categories.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Categories — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      <li><a href="/settings/mailbox" class="nav-item">Mailbox</a></li>
+      <li><a href="/settings/senders" class="nav-item">Allowed senders</a></li>
+      <li><a href="/settings/categories" class="nav-item active">Categories</a></li>
+      <li><a href="/settings/policy" class="nav-item">Security policy</a></li>
+      <li><a href="/settings/security" class="nav-item">Password & session</a></li>
+      <li><a href="/settings/general" class="nav-item">General</a></li>
+    </ul>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+  </nav>
+  <main class="settings-main">
+    <h1>Categories</h1>
+    <p class="muted">Emails can be auto-categorised by putting <code>[slug]</code> at the start of the subject line, or by adding subject match rules below.</p>
+    {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+    <form method="POST" action="/settings/categories" class="settings-form inline-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="add">
+      <input type="text"  name="name"  placeholder="Category name" required>
+      <input type="color" name="color" value="#6366f1">
+      <button type="submit" class="btn btn-primary">Add category</button>
+    </form>
+    <table class="data-table">
+      <thead><tr><th>Name</th><th>Slug</th><th>Color</th><th></th></tr></thead>
+      <tbody>
+        {{range .Categories}}
+        <tr>
+          <td><span class="cat-dot" style="background:{{.Color}}"></span> {{.Name}}</td>
+          <td><code>{{.Slug}}</code></td>
+          <td><span style="background:{{.Color}};display:inline-block;width:24px;height:16px;border-radius:3px"></span></td>
+          <td>
+            <form method="POST" action="/settings/categories">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4" class="empty">No categories yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

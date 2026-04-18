@@ -1,0 +1,78 @@
+{{define "settings/mailbox.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mailbox — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      <li><a href="/settings/mailbox" class="nav-item active">Mailbox</a></li>
+      <li><a href="/settings/senders" class="nav-item">Allowed senders</a></li>
+      <li><a href="/settings/categories" class="nav-item">Categories</a></li>
+      <li><a href="/settings/policy" class="nav-item">Security policy</a></li>
+      <li><a href="/settings/security" class="nav-item">Password & session</a></li>
+      <li><a href="/settings/general" class="nav-item">General</a></li>
+    </ul>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+  </nav>
+  <main class="settings-main">
+    <h1>Mailbox connection</h1>
+    {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+
+    <p class="muted">Need help with connection settings? See the <a href="/help#providers">provider settings guide</a>.</p>
+
+    <form method="POST" action="/settings/mailbox" class="settings-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label>IMAP host
+        <input type="text" name="host" value="{{.Host}}" placeholder="imap.example.com" required>
+      </label>
+      <label>Port
+        <input type="number" name="port" value="{{.Port}}" placeholder="993">
+      </label>
+      <label>Username / email address
+        <input type="text" name="user" value="{{.User}}" placeholder="you@example.com" required>
+      </label>
+      <label>Password
+        <input type="password" name="password" placeholder="Leave blank to keep current">
+      </label>
+      <fieldset class="radio-group">
+        <legend>Connection security</legend>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="tls" {{if eq .Mode "tls"}}checked{{end}}>
+          TLS (port 993) — recommended
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="starttls" {{if eq .Mode "starttls"}}checked{{end}}>
+          STARTTLS (port 143)
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="plain" {{if eq .Mode "plain"}}checked{{end}}>
+          None — unencrypted (local/testing only)
+        </label>
+      </fieldset>
+      <label>Poll interval (minutes)
+        <input type="number" name="poll_interval" value="{{.PollInterval}}" min="1" max="1440" placeholder="15">
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="debug" {{if .Debug}}checked{{end}}>
+        Enable debug logging (logs raw IMAP conversation to console — disable when not needed)
+      </label>
+      <button type="submit" class="btn btn-primary">Save settings</button>
+    </form>
+
+    <div class="section-divider"></div>
+    <h2>Manual poll</h2>
+    <p class="muted">Trigger an immediate poll without waiting for the timer. Useful after changing settings or adding a new allowed sender.</p>
+    <form method="POST" action="/poll">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="btn btn-primary">Poll now</button>
+    </form>
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}

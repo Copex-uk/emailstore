@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags:     ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  # Change this to your Docker Hub username / GitHub Container Registry namespace
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/emailstore
+
+jobs:
+
+  # ── Job 1: Run all tests ──────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Run tests
+        run: go test -v -race -count=1 ./...
+
+      - name: Check for compilation errors
+        run: go build ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+  # ── Job 2: Build and push Docker image ───────────────────────────────────
+  docker:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    needs: test                   # Only runs if all tests pass
+    # Only push on main branch or version tags — not on pull requests
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write             # Needed to push to GitHub Container Registry
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags and labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag :latest on every push to main
+            type=raw,value=latest,enable={{is_default_branch}}
+            # Tag :v1.2.3 on version tags
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Tag :sha-abc1234 for traceability
+            type=sha,prefix=sha-,format=short
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags:   ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache layers between builds to speed things up
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          # Build for both amd64 (servers) and arm64 (Raspberry Pi / Apple Silicon)
+          platforms: linux/amd64,linux/arm64

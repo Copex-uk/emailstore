@@ -1,0 +1,56 @@
+{{define "settings/senders.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Allowed Senders — EmailStore</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar">
+    <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
+    <ul class="nav-list">
+      <li><a href="/settings/mailbox" class="nav-item">Mailbox</a></li>
+      <li><a href="/settings/senders" class="nav-item active">Allowed senders</a></li>
+      <li><a href="/settings/categories" class="nav-item">Categories</a></li>
+      <li><a href="/settings/policy" class="nav-item">Security policy</a></li>
+      <li><a href="/settings/security" class="nav-item">Password & session</a></li>
+      <li><a href="/settings/general" class="nav-item">General</a></li>
+    </ul>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+  </nav>
+  <main class="settings-main">
+    <h1>Allowed senders</h1>
+    <p class="muted">Only emails from these addresses will be stored. All others are ignored.</p>
+    {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+    {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
+    <form method="POST" action="/settings/senders" class="settings-form inline-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="email" name="email" placeholder="sender@example.com" required>
+      <input type="text"  name="name"  placeholder="Display name (optional)">
+      <button type="submit" class="btn btn-primary">Add sender</button>
+    </form>
+    <table class="data-table">
+      <thead><tr><th>Email</th><th>Name</th><th></th></tr></thead>
+      <tbody>
+        {{range .Senders}}
+        <tr>
+          <td>{{.Email}}</td>
+          <td>{{.Name}}</td>
+          <td>
+            <form method="POST" action="/settings/senders/delete">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="3" class="empty">No senders added yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </main>
+</div>
+<script src="/static/theme.js"></script>
+</body></html>{{end}}
