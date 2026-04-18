@@ -85,9 +85,16 @@ func TestSessionExpiry(t *testing.T) {
 func TestPruneExpiredSessions(t *testing.T) {
 	sqldb := testhelper.NewDB(t)
 
-	// Insert a valid and an expired session directly
+	// Create a valid session
 	validID, _ := NewSession(sqldb, 60)
-	_, _ = NewSession(sqldb, 0) // expired
+
+	// Insert an already-expired session directly with a past timestamp
+	sqldb.Exec(
+		`INSERT INTO sessions (id, created_at, expires_at) VALUES (?, ?, ?)`,
+		"expired-session-id",
+		time.Now().Add(-2*time.Hour).Unix(),
+		time.Now().Add(-1*time.Hour).Unix(), // expired 1 hour ago
+	)
 
 	PruneExpiredSessions(sqldb)
 

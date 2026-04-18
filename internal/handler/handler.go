@@ -17,9 +17,9 @@ import (
 )
 
 type Handler struct {
-	DB           *sql.DB
-	Templates    *template.Template
-	AttachDir    string
+	DB          *sql.DB
+	Templates   *template.Template
+	AttachDir   string
 	LoginLimiter *auth.RateLimiter
 }
 

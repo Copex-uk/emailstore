@@ -5,9 +5,7 @@ import (
 )
 
 // openTestDB opens an in-memory DB directly (can't use testhelper to avoid cycle)
-func openTestDB(t *testing.T) interface {
-	Exec(string, ...any) (interface{}, error)
-} {
+func openTestDB(t *testing.T) interface{ Exec(string, ...any) (interface{}, error) } {
 	t.Helper()
 	return nil
 }

@@ -211,6 +211,9 @@ func TestSaveAttachment(t *testing.T) {
 func TestListCategories(t *testing.T) {
 	db := testhelper.NewDB(t)
 
+	// Clear any categories seeded by migrations
+	db.Exec(`DELETE FROM categories`)
+
 	db.Exec(`INSERT INTO categories (name, slug, color) VALUES ('Work','work','#00f'),('Personal','personal','#0f0')`)
 
 	cats, err := ListCategories(db)
@@ -313,6 +316,7 @@ func TestIsAllowedSender(t *testing.T) {
 
 func TestCountByCategory(t *testing.T) {
 	db := testhelper.NewDB(t)
+	db.Exec(`DELETE FROM categories`)
 
 	var catID int64
 	db.QueryRow(`INSERT INTO categories (name, slug, color) VALUES ('Work','work','#000') RETURNING id`).Scan(&catID)
