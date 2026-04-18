@@ -56,11 +56,11 @@ const (
 	KeyMaxAttachBytes = "max_attach_bytes"
 
 	// Security policy keys
-	KeySecurityMode          = "security_mode"
-	KeySecurityRequireToken  = "security_require_token"
-	KeySecurityTokenLocation = "security_token_location"
-	KeySecurityTokens        = "security_tokens"
-	KeySecurityMaxEmailMB    = "security_max_email_mb"
-	KeySecurityMaxAttachments= "security_max_attachments"
-	KeySecurityMaxAttachMB   = "security_max_attach_mb"
+	KeySecurityMode           = "security_mode"
+	KeySecurityRequireToken   = "security_require_token"
+	KeySecurityTokenLocation  = "security_token_location"
+	KeySecurityTokens         = "security_tokens"
+	KeySecurityMaxEmailMB     = "security_max_email_mb"
+	KeySecurityMaxAttachments = "security_max_attachments"
+	KeySecurityMaxAttachMB    = "security_max_attach_mb"
 )

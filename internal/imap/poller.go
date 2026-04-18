@@ -444,8 +444,8 @@ func saveAttachment(sqldb *sql.DB, emailID int64, att *pendingAttachment, attach
 
 	return email.SaveAttachment(sqldb, &email.Attachment{
 		EmailID:    emailID,
-		Filename:   att.OrigFilename,          // display name for the UI
-		MIMEType:   att.MIMEType,              // sniffed, not declared
+		Filename:   att.OrigFilename, // display name for the UI
+		MIMEType:   att.MIMEType,     // sniffed, not declared
 		Size:       int64(len(att.Data)),
 		StoredPath: dest,
 	})

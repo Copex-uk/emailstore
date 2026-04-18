@@ -8,8 +8,8 @@ import (
 
 // loginAttempt tracks failed login attempts for a single IP.
 type loginAttempt struct {
-	count     int
-	firstSeen time.Time
+	count       int
+	firstSeen   time.Time
 	lockedUntil time.Time
 }
 

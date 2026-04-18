@@ -31,9 +31,9 @@ const (
 
 // Limits defines resource constraints applied to every accepted email.
 type Limits struct {
-	MaxEmailSizeMB      int64 // total email size
-	MaxAttachments      int   // maximum number of attachments
-	MaxAttachSizeMB     int64 // per-attachment size limit
+	MaxEmailSizeMB  int64 // total email size
+	MaxAttachments  int   // maximum number of attachments
+	MaxAttachSizeMB int64 // per-attachment size limit
 }
 
 // Policy is the fully resolved security policy loaded from the database.

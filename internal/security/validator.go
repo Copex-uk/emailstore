@@ -19,11 +19,11 @@ func (e *ValidationError) Error() string { return e.Reason }
 // ParsedEmail holds the data the validator needs. Using a plain struct keeps
 // the security package free of any IMAP or mail library dependencies.
 type ParsedEmail struct {
-	SenderAddr      string // normalised lowercase email address
-	Subject         string
-	Headers         map[string]string // lowercase header names
-	BodySizeBytes   int64
-	Attachments     []AttachmentMeta
+	SenderAddr    string // normalised lowercase email address
+	Subject       string
+	Headers       map[string]string // lowercase header names
+	BodySizeBytes int64
+	Attachments   []AttachmentMeta
 }
 
 // AttachmentMeta describes a single attachment without holding its data.
