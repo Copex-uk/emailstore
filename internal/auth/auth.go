@@ -151,11 +151,18 @@ func NewCSRFToken(w http.ResponseWriter) string {
 	rand.Read(b)
 	token := hex.EncodeToString(b)
 	http.SetCookie(w, &http.Cookie{
-		Name:     "es_csrf",
-		Value:    token,
-		Path:     "/",
+		Name:  "es_csrf",
+		Value: token,
+		Path:  "/",
+		// MaxAge keeps the cookie alive across the page → form submit round trip.
+		// 1 hour is plenty; the token is single-use per page load anyway.
+		MaxAge:   3600,
 		HttpOnly: false,
-		SameSite: http.SameSiteStrictMode,
+		// SameSite=Lax (not Strict) is correct here:
+		// - Strict blocks cookies on top-level navigations, breaking setup POST
+		//   when accessed via a local network IP (192.168.x.x) over plain HTTP.
+		// - Lax allows same-site form POSTs while still blocking cross-site requests.
+		SameSite: http.SameSiteLaxMode,
 	})
 	return token
 }

@@ -153,8 +153,15 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	// During setup the user has no session, so a missing CSRF cookie (e.g. first
+	// visit over a local network IP) just means the page needs to be reloaded to
+	// get a fresh token — redirect back to the current step rather than hard 403.
 	if !auth.ValidateCSRF(r) {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		step := r.FormValue("step")
+		if step == "" {
+			step = "password"
+		}
+		http.Redirect(w, r, "/setup?step="+step, http.StatusSeeOther)
 		return
 	}
 	step := r.FormValue("step")

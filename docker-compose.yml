@@ -1,6 +1,6 @@
 services:
   emailstore:
-    image: ghcr.io/copex-uk/emailstore:latest
+    image: ghcr.io/YOURUSERNAME/emailstore:latest
     container_name: emailstore
     restart: unless-stopped
 

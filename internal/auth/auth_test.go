@@ -118,6 +118,24 @@ func TestCSRFRoundTrip(t *testing.T) {
 		t.Errorf("expected 32-char CSRF token, got %d", len(token))
 	}
 
+	// Verify the cookie has the right attributes
+	var csrfCookie *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "es_csrf" {
+			csrfCookie = c
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("CSRF cookie not set")
+	}
+	if csrfCookie.MaxAge != 3600 {
+		t.Errorf("CSRF cookie MaxAge = %d, want 3600", csrfCookie.MaxAge)
+	}
+	if csrfCookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("CSRF cookie SameSite should be Lax for local network compatibility")
+	}
+
 	// Build a request that carries the cookie and form value
 	req := httptest.NewRequest("POST", "/", nil)
 	req.AddCookie(&http.Cookie{Name: "es_csrf", Value: token})
