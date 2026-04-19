@@ -1,12 +1,16 @@
 package handler
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
+	"fmt"
 	"html/template"
 	"log"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -37,6 +41,13 @@ func (h *Handler) Routes() http.Handler {
 
 	// Static files
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./static/favicon.svg")
+	})
+	mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		http.ServeFile(w, r, "./static/favicon.svg")
+	})
 
 	// Public routes
 	mux.HandleFunc("GET /setup", h.setupGet)
@@ -56,6 +67,8 @@ func (h *Handler) Routes() http.Handler {
 	protected.HandleFunc("GET /", h.inbox)
 	protected.HandleFunc("GET /emails/{id}", h.viewEmail)
 	protected.HandleFunc("POST /emails/{id}/category", h.setCategory)
+	protected.HandleFunc("POST /emails/{id}/delete", h.deleteEmail)
+	protected.HandleFunc("GET /emails/{id}/download", h.downloadEmail)
 	protected.HandleFunc("GET /attachments/{id}", h.downloadAttachment)
 	protected.HandleFunc("GET /settings", h.settingsIndex)
 	protected.HandleFunc("GET /settings/security", h.settingsSecurityGet)
@@ -430,6 +443,115 @@ func (h *Handler) setCategory(w http.ResponseWriter, r *http.Request) {
 	}
 	email.SetCategory(h.DB, emailID, catID)
 	http.Redirect(w, r, "/emails/"+r.PathValue("id"), http.StatusSeeOther)
+}
+
+func (h *Handler) deleteEmail(w http.ResponseWriter, r *http.Request) {
+	if !auth.ValidateCSRF(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	// Require the user to have typed "delete" as confirmation
+	if r.FormValue("confirm") != "delete" {
+		http.Redirect(w, r, "/emails/"+r.PathValue("id"), http.StatusSeeOther)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Get attachment paths before deleting from DB (FK cascade removes rows)
+	paths, _ := email.GetAttachmentPaths(h.DB, id)
+
+	if err := email.Delete(h.DB, id); err != nil {
+		log.Printf("event=delete_error email_id=%d err=%q", id, err)
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Remove attachment files and their directory from disk
+	for _, p := range paths {
+		os.Remove(p)
+	}
+	if len(paths) > 0 {
+		// Remove the per-email attachment directory if now empty
+		dir := filepath.Dir(paths[0])
+		os.Remove(dir) // only removes if empty
+	}
+
+	log.Printf("event=email_deleted email_id=%d", id)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h *Handler) downloadEmail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	e, err := email.Get(h.DB, id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if len(e.Attachments) == 0 {
+		// No attachments — serve a plain .eml file
+		eml := buildEML(e)
+		filename := fmt.Sprintf("email-%d.eml", e.ID)
+		w.Header().Set("Content-Disposition",
+			mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		w.Header().Set("Content-Type", "message/rfc822")
+		w.Write(eml)
+		return
+	}
+
+	// Has attachments — serve a zip containing the .eml and all attachment files
+	filename := fmt.Sprintf("email-%d.zip", e.ID)
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+	w.Header().Set("Content-Type", "application/zip")
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	// Write the email body as a .eml file inside the zip
+	emlWriter, err := zw.Create(fmt.Sprintf("email-%d.eml", e.ID))
+	if err == nil {
+		emlWriter.Write(buildEML(e))
+	}
+
+	// Write each attachment file
+	for _, att := range e.Attachments {
+		data, err := os.ReadFile(att.StoredPath)
+		if err != nil {
+			log.Printf("event=download_attach_read_error path=%q err=%q", att.StoredPath, err)
+			continue
+		}
+		f, err := zw.Create(att.Filename)
+		if err != nil {
+			continue
+		}
+		f.Write(data)
+	}
+}
+
+// buildEML constructs a minimal RFC 822 formatted email from stored content.
+func buildEML(e *email.Email) []byte {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "From: %s <%s>\r\n", e.SenderName, e.SenderEmail)
+	fmt.Fprintf(&b, "Subject: %s\r\n", e.Subject)
+	fmt.Fprintf(&b, "Date: %s\r\n", e.ReceivedAt.Format("Mon, 02 Jan 2006 15:04:05 -0700"))
+	fmt.Fprintf(&b, "Message-ID: %s\r\n", e.MessageID)
+	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
+	if e.BodyHTML != "" {
+		fmt.Fprintf(&b, "Content-Type: text/html; charset=utf-8\r\n\r\n")
+		b.WriteString(e.BodyHTML)
+	} else {
+		fmt.Fprintf(&b, "Content-Type: text/plain; charset=utf-8\r\n\r\n")
+		b.WriteString(e.BodyText)
+	}
+	return b.Bytes()
 }
 
 func (h *Handler) downloadAttachment(w http.ResponseWriter, r *http.Request) {

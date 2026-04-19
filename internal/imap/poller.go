@@ -263,6 +263,11 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 		// ── Category assignment ───────────────────────────────────────────
 		if catID, ok := email.MatchCategory(sqldb, e.Subject); ok {
 			e.CategoryID = sql.NullInt64{Int64: catID, Valid: true}
+		} else {
+			// No match — fall back to the Inbox category so nothing is uncategorised
+			if inboxID := email.InboxCategoryID(sqldb); inboxID > 0 {
+				e.CategoryID = sql.NullInt64{Int64: inboxID, Valid: true}
+			}
 		}
 
 		// ── Persist ───────────────────────────────────────────────────────

@@ -132,6 +132,40 @@ func MarkRead(db *sql.DB, id int64) error {
 	return err
 }
 
+// Delete removes an email and all its attachments from the database.
+// Attachment files on disk must be removed separately by the caller.
+func Delete(db *sql.DB, id int64) error {
+	_, err := db.Exec(`DELETE FROM emails WHERE id = ?`, id)
+	return err
+}
+
+// GetAttachmentPaths returns the stored file paths for all attachments of an email.
+func GetAttachmentPaths(db *sql.DB, emailID int64) ([]string, error) {
+	rows, err := db.Query(`SELECT stored_path FROM attachments WHERE email_id = ?`, emailID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+// InboxCategoryID returns the ID of the category with slug "inbox", or 0 if not found.
+func InboxCategoryID(db *sql.DB) int64 {
+	cat, err := CategoryBySlug(db, "inbox")
+	if err != nil {
+		return 0
+	}
+	return cat.ID
+}
+
 func SetCategory(db *sql.DB, emailID, categoryID int64) error {
 	_, err := db.Exec(`UPDATE emails SET category_id = ? WHERE id = ?`, categoryID, emailID)
 	return err

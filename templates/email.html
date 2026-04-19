@@ -3,6 +3,7 @@
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Email.Subject}} — EmailStore</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script>const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);</script>
 </head>
 <body>
@@ -25,7 +26,15 @@
   </nav>
   <main class="email-view">
     <div class="email-header">
-      <a href="/" class="btn btn-sm">← Back</a>
+      <div class="email-header-top">
+        <a href="/" class="btn btn-sm">← Back</a>
+        <div class="email-header-actions">
+          <a href="/emails/{{.Email.ID}}/download" class="btn btn-sm" title="{{if .Email.Attachments}}Download email + attachments as zip{{else}}Download as .eml{{end}}">
+            ↓ Download{{if .Email.Attachments}} zip{{else}} .eml{{end}}
+          </a>
+          <button class="btn btn-sm btn-danger-outline" onclick="showDeleteConfirm()">Delete</button>
+        </div>
+      </div>
       <h1>{{.Email.Subject}}</h1>
       <div class="email-meta">
         <span>From: <strong>{{.Email.SenderName}}</strong> &lt;{{.Email.SenderEmail}}&gt;</span>
@@ -41,6 +50,7 @@
         </select>
       </form>
     </div>
+
     <div class="email-body">
       {{if .Email.BodyHTML}}
         <iframe class="email-iframe" srcdoc="{{.Email.BodyHTML}}" sandbox></iframe>
@@ -48,17 +58,61 @@
         <pre class="email-text">{{.Email.BodyText}}</pre>
       {{end}}
     </div>
+
     {{if .Email.Attachments}}
     <div class="attachments">
       <h3>Attachments</h3>
       {{range .Email.Attachments}}
       <a href="/attachments/{{.ID}}" class="attachment-link">
-        {{.Filename}} <span class="muted">({{formatBytes .Size}})</span>
+        ↓ {{.Filename}} <span class="muted">({{formatBytes .Size}})</span>
       </a>
       {{end}}
     </div>
     {{end}}
   </main>
 </div>
+
+<!-- Delete confirmation overlay -->
+<div id="delete-overlay" class="delete-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+  <div class="delete-dialog">
+    <h2 id="delete-title">Delete email</h2>
+    <p>This will permanently delete this email{{if .Email.Attachments}} and its {{len .Email.Attachments}} attachment(s){{end}} from your store. This cannot be undone.</p>
+    <p>Type <strong>delete</strong> to confirm:</p>
+    <input type="text" id="delete-confirm-input" class="field-input" placeholder="delete" autocomplete="off" autofocus>
+    <div class="delete-dialog-actions">
+      <form method="POST" action="/emails/{{.Email.ID}}/delete" id="delete-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="hidden" name="confirm" id="delete-confirm-value">
+        <button type="submit" id="delete-submit-btn" class="btn btn-danger" disabled>Delete permanently</button>
+      </form>
+      <button class="btn" onclick="hideDeleteConfirm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/theme.js"></script>
+<script>
+function showDeleteConfirm() {
+  document.getElementById('delete-overlay').style.display = 'flex';
+  document.getElementById('delete-confirm-input').focus();
+}
+function hideDeleteConfirm() {
+  document.getElementById('delete-overlay').style.display = 'none';
+  document.getElementById('delete-confirm-input').value = '';
+  document.getElementById('delete-submit-btn').disabled = true;
+}
+document.getElementById('delete-confirm-input').addEventListener('input', function() {
+  const match = this.value === 'delete';
+  document.getElementById('delete-submit-btn').disabled = !match;
+  document.getElementById('delete-confirm-value').value = this.value;
+});
+// Close on Escape
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') hideDeleteConfirm();
+});
+// Close on backdrop click
+document.getElementById('delete-overlay').addEventListener('click', function(e) {
+  if (e.target === this) hideDeleteConfirm();
+});
+</script>
 </body></html>{{end}}

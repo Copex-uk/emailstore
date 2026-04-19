@@ -105,4 +105,11 @@ var migrations = []string{
 			('Finance',  'finance',  '#f59e0b'),
 			('Other',    'other',    '#94a3b8')
 		) WHERE (SELECT COUNT(*) FROM categories) = 0`,
+
+	// Assign any existing uncategorised emails to the inbox category.
+	// This runs on every startup but only affects emails with NULL category_id.
+	`UPDATE emails SET category_id = (
+		SELECT id FROM categories WHERE slug = 'inbox' LIMIT 1
+	) WHERE category_id IS NULL
+	  AND (SELECT id FROM categories WHERE slug = 'inbox' LIMIT 1) IS NOT NULL`,
 }
