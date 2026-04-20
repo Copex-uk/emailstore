@@ -23,6 +23,7 @@
   <main class="settings-main">
     <h1>Security policy</h1>
     {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+    {{if .Warning}}<p class="alert alert-warning">{{.Warning}}</p>{{end}}
     {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
 
     <p class="muted">Controls how strictly emails are validated before being stored. See the <a href="/help#security">help page</a> for full details.</p>

@@ -241,6 +241,13 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 	case "delete":
 		id := r.FormValue("id")
 		if id != "" {
+			// Protect the inbox category — it is the fallback for uncategorised emails
+			// and must always exist. Silently ignore the request if the user tries to delete it.
+			var slug string
+			h.DB.QueryRow(`SELECT slug FROM categories WHERE id = ?`, id).Scan(&slug)
+			if slug == "inbox" {
+				break
+			}
 			h.DB.Exec(`DELETE FROM categories WHERE id = ?`, id)
 		}
 	case "add_rule":
@@ -321,14 +328,27 @@ func bytesToMB(s string) string {
 func (h *Handler) settingsPolicyGet(w http.ResponseWriter, r *http.Request) {
 	s, _ := db.SettingGetAll(h.DB)
 	csrf := auth.NewCSRFToken(w)
+
+	mode := s[db.KeySecurityMode]
+	tokens := s[db.KeySecurityTokens]
+	requireToken := s[db.KeySecurityRequireToken] == "1"
+
+	// Warn if strict/balanced mode is set with token required but no tokens configured —
+	// this will reject every email.
+	var warn string
+	if requireToken && tokens == "" && (mode == "strict" || mode == "balanced") {
+		warn = "Token authentication is required but no tokens are configured. All emails will be rejected until you add at least one token, or switch to Relaxed mode."
+	}
+
 	h.render(w, "settings/policy.html", map[string]any{
-		"Mode":           s[db.KeySecurityMode],
-		"RequireToken":   s[db.KeySecurityRequireToken] == "1",
+		"Mode":           mode,
+		"RequireToken":   requireToken,
 		"TokenLocation":  s[db.KeySecurityTokenLocation],
-		"Tokens":         s[db.KeySecurityTokens],
+		"Tokens":         tokens,
 		"MaxEmailMB":     s[db.KeySecurityMaxEmailMB],
 		"MaxAttachments": s[db.KeySecurityMaxAttachments],
 		"MaxAttachMB":    s[db.KeySecurityMaxAttachMB],
+		"Warning":        warn,
 		"CSRF":           csrf,
 	})
 }

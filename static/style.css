@@ -412,3 +412,10 @@ code { background: var(--surface2); border: 1px solid var(--border); padding: 0.
 .delete-dialog p strong { color: var(--text); }
 .delete-dialog .field-input { margin: 0.25rem 0 1.25rem; }
 .delete-dialog-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+
+/* ── Warning alert ──────────────────────────────────────── */
+.alert-warning { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+@media (prefers-color-scheme: dark) {
+  [data-theme="dark"] .alert-warning,
+  .alert-warning { background: #2d1f00; color: #fcd34d; border-color: #78450a; }
+}

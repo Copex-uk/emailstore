@@ -211,3 +211,32 @@ func TestExtractToken_Header(t *testing.T) {
 		t.Errorf("expected headertoken, got %q", got)
 	}
 }
+
+func TestDefaultPolicy_AllowsWithSenderOnly(t *testing.T) {
+	// Default policy is relaxed — should accept known sender without any token
+	policy := DefaultPolicy()
+	if policy.Mode != ModeRelaxed {
+		t.Errorf("DefaultPolicy mode = %s, want relaxed", policy.Mode)
+	}
+	if policy.TokenRequired {
+		t.Error("DefaultPolicy should not require token by default")
+	}
+	e := &ParsedEmail{
+		SenderAddr: "alice@example.com",
+		Subject:    "Just a plain email, no token",
+	}
+	if err := ValidateEmail(e, true, policy); err != nil {
+		t.Errorf("default policy should accept known sender: %v", err)
+	}
+}
+
+func TestDefaultPolicy_RejectsUnknownSender(t *testing.T) {
+	policy := DefaultPolicy()
+	e := &ParsedEmail{
+		SenderAddr: "unknown@attacker.com",
+		Subject:    "Spam",
+	}
+	if err := ValidateEmail(e, false, policy); err == nil {
+		t.Error("default policy should still reject unknown senders")
+	}
+}

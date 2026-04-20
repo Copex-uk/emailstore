@@ -46,14 +46,16 @@ type Policy struct {
 	OnReject      string // "delete" (only supported action currently)
 }
 
-// DefaultPolicy returns the strictest safe defaults.
-// These apply when the database has no security settings configured.
+// DefaultPolicy returns safe defaults for a fresh installation.
+// Mode is relaxed (sender allowlist only, no token required) so that emails
+// start arriving as soon as the user adds an allowed sender. Users can tighten
+// this to balanced or strict in Settings → Security policy once they are ready.
 func DefaultPolicy() *Policy {
 	return &Policy{
-		Mode:          ModeStrict,
-		TokenRequired: true,
+		Mode:          ModeRelaxed,
+		TokenRequired: false,
 		TokenLocation: TokenInSubject,
-		Tokens:        nil, // no tokens → strict mode rejects everything
+		Tokens:        nil,
 		Limits: Limits{
 			MaxEmailSizeMB:  10,
 			MaxAttachments:  5,

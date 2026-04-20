@@ -40,12 +40,16 @@
           <td><code>{{.Slug}}</code></td>
           <td><span style="background:{{.Color}};display:inline-block;width:24px;height:16px;border-radius:3px"></span></td>
           <td>
+            {{if eq .Slug "inbox"}}
+              <span class="muted" style="font-size:0.8rem">protected</span>
+            {{else}}
             <form method="POST" action="/settings/categories">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="action" value="delete">
               <input type="hidden" name="id" value="{{.ID}}">
               <button type="submit" class="btn btn-sm btn-danger">Delete</button>
             </form>
+            {{end}}
           </td>
         </tr>
         {{else}}
