@@ -120,6 +120,8 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 
 	// Load security policy fresh on every poll so settings changes apply immediately
 	policy := security.LoadPolicy(sqldb)
+	log.Printf("event=poll_start mode=%s require_token=%v tokens_configured=%v",
+		policy.Mode, policy.TokenRequired, len(policy.Tokens) > 0)
 
 	addr := cfg.Host + ":" + cfg.Port
 	var client *imapclient.Client
@@ -161,7 +163,14 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 	}
 	seqNums := searchData.AllSeqNums()
 	if len(seqNums) == 0 {
-		log.Printf("event=poll_complete accepted=0 rejected=0 reason=no_new_messages")
+		// Also check total message count so we can tell the difference between
+		// "mailbox empty" and "all messages already seen/deleted"
+		allData, _ := client.Search(&imap.SearchCriteria{}, nil).Wait()
+		total := 0
+		if allData != nil {
+			total = len(allData.AllSeqNums())
+		}
+		log.Printf("event=poll_complete accepted=0 rejected=0 reason=no_unseen_messages total_in_mailbox=%d", total)
 		return nil
 	}
 

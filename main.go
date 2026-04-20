@@ -37,6 +37,12 @@ func main() {
 		log.Fatalf("load templates: %v", err)
 	}
 
+	// Ensure the inbox category always exists — it is the permanent fallback
+	// for uncategorised emails and must never be absent, even after upgrades.
+	sqldb.Exec(
+		`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,
+	)
+
 	h := handler.New(sqldb, tmpl, cfg.AttachDir)
 
 	// Root context — cancelled on shutdown signal

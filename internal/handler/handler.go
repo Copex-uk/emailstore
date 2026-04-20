@@ -232,12 +232,22 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 			{"Finance", "finance", "#f59e0b"},
 			{"Other", "other", "#94a3b8"},
 		}
-		// Remove all default categories first so unchecked ones are cleared
+		// Remove all default categories first so unchecked ones are cleared,
+		// but NEVER remove inbox — it is the permanent fallback category.
 		for _, cat := range allDefaults {
-			h.DB.Exec(`DELETE FROM categories WHERE slug = ?`, cat.slug)
+			if cat.slug != "inbox" {
+				h.DB.Exec(`DELETE FROM categories WHERE slug = ?`, cat.slug)
+			}
 		}
-		// Insert only the ones the user checked
+		// Always ensure inbox exists regardless of what was checked
+		h.DB.Exec(
+			`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,
+		)
+		// Insert the other categories the user selected
 		for _, sel := range selected {
+			if sel == "inbox" {
+				continue // already handled above
+			}
 			for _, cat := range allDefaults {
 				if sel == cat.slug {
 					h.DB.Exec(
@@ -256,12 +266,15 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setupFinish(w http.ResponseWriter, r *http.Request) {
-	// Allows skipping the categories step with no selections
+	// Skipping categories — still ensure inbox always exists as the fallback
 	done, _ := db.SettingGet(h.DB, db.KeySetupDone)
 	if done == "1" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	h.DB.Exec(
+		`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,
+	)
 	db.SettingSet(h.DB, db.KeySetupDone, "1")
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
