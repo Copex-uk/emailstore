@@ -151,31 +151,39 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 	}
 	defer func() { client.Logout().Wait() }()
 
-	if _, err = client.Select("INBOX", nil).Wait(); err != nil {
+	// SELECT INBOX — the response directly tells us how many messages exist.
+	// We use this count to build a 1:N sequence set rather than running SEARCH,
+	// which avoids Dovecot compatibility issues with empty search criteria.
+	statusData, err := client.Select("INBOX", nil).Wait()
+	if err != nil {
 		return fmt.Errorf("select inbox: %w", err)
 	}
-
-	// Search ALL messages — not just unseen ones.
-	// Previous failed polls may have marked messages \Seen without storing them,
-	// so searching only unseen would miss those. We use the message-ID duplicate
-	// check to skip anything we have already stored.
-	searchData, err := client.Search(&imap.SearchCriteria{}, nil).Wait()
-	if err != nil {
-		return fmt.Errorf("search: %w", err)
-	}
-	seqNums := searchData.AllSeqNums()
-	if len(seqNums) == 0 {
+	totalMessages := statusData.NumMessages
+	if totalMessages == 0 {
 		log.Printf("event=poll_complete accepted=0 rejected=0 reason=mailbox_empty")
 		return nil
+	}
+	log.Printf("event=poll_found total_messages=%d", totalMessages)
+
+	// Build a sequence set covering all messages: 1:*
+	seqSet := imap.SeqSet{}
+	seqSet.AddRange(1, totalMessages)
+	seqNums := []uint32{}
+	for i := uint32(1); i <= totalMessages; i++ {
+		seqNums = append(seqNums, i)
 	}
 
 	// Cap per-run processing
 	if len(seqNums) > MaxEmailsPerRun {
 		log.Printf("event=poll_capped total=%d cap=%d", len(seqNums), MaxEmailsPerRun)
 		seqNums = seqNums[:MaxEmailsPerRun]
+		seqSet = imap.SeqSet{}
+		for _, n := range seqNums {
+			seqSet.AddNum(n)
+		}
 	}
 
-	fetchCmd := client.Fetch(imap.SeqSetNum(seqNums...), &imap.FetchOptions{
+	fetchCmd := client.Fetch(seqSet, &imap.FetchOptions{
 		UID:         true,
 		Envelope:    true,
 		BodySection: []*imap.FetchItemBodySection{{}},
