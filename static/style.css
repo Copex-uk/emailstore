@@ -419,3 +419,16 @@ code { background: var(--surface2); border: 1px solid var(--border); padding: 0.
   [data-theme="dark"] .alert-warning,
   .alert-warning { background: #2d1f00; color: #fcd34d; border-color: #78450a; }
 }
+
+/* ── Protected category (inbox in setup) ────────────────── */
+.category-pick-protected { opacity: 0.75; cursor: default; }
+.category-pick-protected input { cursor: default; }
+.cat-protected-label {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--primary);
+  background: var(--primary-tint);
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  padding: 1px 6px;
+}

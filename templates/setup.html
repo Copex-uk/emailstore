@@ -99,12 +99,18 @@
     <form method="POST" action="/setup">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="step" value="categories">
+      <!-- Always submit inbox regardless of checkbox state -->
+      <input type="hidden" name="categories" value="inbox">
       <div class="category-picker">
         {{range .DefaultCategories}}
-        <label class="category-pick-item">
+        <label class="category-pick-item{{if eq .slug "inbox"}} category-pick-protected{{end}}">
+          {{if eq .slug "inbox"}}
+          <input type="checkbox" name="categories" value="{{.slug}}" checked disabled>
+          {{else}}
           <input type="checkbox" name="categories" value="{{.slug}}" checked>
+          {{end}}
           <span class="cat-dot" style="background:{{.color}}"></span>
-          {{.name}}
+          {{.name}}{{if eq .slug "inbox"}} <span class="cat-protected-label">required</span>{{end}}
         </label>
         {{end}}
       </div>

@@ -155,22 +155,17 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 		return fmt.Errorf("select inbox: %w", err)
 	}
 
-	searchData, err := client.Search(&imap.SearchCriteria{
-		NotFlag: []imap.Flag{imap.FlagSeen},
-	}, nil).Wait()
+	// Search ALL messages — not just unseen ones.
+	// Previous failed polls may have marked messages \Seen without storing them,
+	// so searching only unseen would miss those. We use the message-ID duplicate
+	// check to skip anything we have already stored.
+	searchData, err := client.Search(&imap.SearchCriteria{}, nil).Wait()
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
 	seqNums := searchData.AllSeqNums()
 	if len(seqNums) == 0 {
-		// Also check total message count so we can tell the difference between
-		// "mailbox empty" and "all messages already seen/deleted"
-		allData, _ := client.Search(&imap.SearchCriteria{}, nil).Wait()
-		total := 0
-		if allData != nil {
-			total = len(allData.AllSeqNums())
-		}
-		log.Printf("event=poll_complete accepted=0 rejected=0 reason=no_unseen_messages total_in_mailbox=%d", total)
+		log.Printf("event=poll_complete accepted=0 rejected=0 reason=mailbox_empty")
 		return nil
 	}
 
