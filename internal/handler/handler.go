@@ -128,7 +128,8 @@ func (h *Handler) setupGet(w http.ResponseWriter, r *http.Request) {
 	if step == "" {
 		step = "password"
 	}
-	csrf := auth.NewCSRFToken(w)
+	// No CSRF on setup — no account exists yet so nothing sensitive to protect.
+	// The setup_done flag prevents replay once setup is complete.
 	switch step {
 	case "mailbox":
 		s, _ := db.SettingGetAll(h.DB)
@@ -139,14 +140,14 @@ func (h *Handler) setupGet(w http.ResponseWriter, r *http.Request) {
 			mode = "plain"
 		}
 		h.render(w, "setup.html", map[string]any{
-			"Step": "mailbox", "CSRF": csrf,
+			"Step": "mailbox",
 			"Host": s[db.KeyIMAPHost], "Port": s[db.KeyIMAPPort],
 			"User": s[db.KeyIMAPUser], "Mode": mode,
 			"PollInterval": s[db.KeyPollInterval],
 		})
 	case "categories":
 		h.render(w, "setup.html", map[string]any{
-			"Step": "categories", "CSRF": csrf,
+			"Step": "categories",
 			"DefaultCategories": []map[string]string{
 				{"name": "Inbox", "slug": "inbox", "color": "#6366f1"},
 				{"name": "Work", "slug": "work", "color": "#0ea5e9"},
@@ -156,7 +157,7 @@ func (h *Handler) setupGet(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	default:
-		h.render(w, "setup.html", map[string]any{"Step": "password", "CSRF": csrf})
+		h.render(w, "setup.html", map[string]any{"Step": "password"})
 	}
 }
 

@@ -1,3 +1,16 @@
+// Package imap implements IMAP mailbox polling for EmailStore.
+//
+// Architecture: two-pass fetch.
+//   Pass 1 – fetch envelopes for all messages via Collect() into memory,
+//             close the FetchCommand, THEN validate/delete rejects.
+//   Pass 2 – for each validated candidate, open a new FetchCommand for
+//             the body alone, Collect() it, close the command, then
+//             parse/store/delete.
+//
+// This order is required because Dovecot (IMAP4rev1) rejects Expunge while
+// a FetchCommand is still open ("command out of order"). Using Collect()
+// ensures the command is fully consumed and implicitly closed before any
+// Store/Expunge is sent.
 package imap
 
 import (
@@ -25,9 +38,9 @@ import (
 	gomail "github.com/emersion/go-message/mail"
 )
 
-// MaxEmailsPerRun caps how many emails are processed in a single poll.
-// Prevents a flooded mailbox from holding up the poller indefinitely.
 const MaxEmailsPerRun = 50
+
+// ── Config ─────────────────────────────────────────────────────────────────
 
 type Config struct {
 	Host      string
@@ -43,7 +56,7 @@ type Config struct {
 func LoadConfig(sqldb *sql.DB, attachDir string) (*Config, error) {
 	settings, err := db.SettingGetAll(sqldb)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load settings: %w", err)
 	}
 	c := &Config{
 		Host:      settings[db.KeyIMAPHost],
@@ -68,8 +81,8 @@ func LoadConfig(sqldb *sql.DB, attachDir string) (*Config, error) {
 	return c, nil
 }
 
-// normalisedAddr parses a raw RFC 5322 address and returns the lowercase
-// email portion only. Display names and angle brackets are stripped.
+// ── Helpers ────────────────────────────────────────────────────────────────
+
 func normalisedAddr(raw string) string {
 	addr, err := mail.ParseAddress(raw)
 	if err != nil {
@@ -78,22 +91,6 @@ func normalisedAddr(raw string) string {
 	return strings.ToLower(addr.Address)
 }
 
-// deleteMessage marks a message \Deleted and immediately expunges it.
-func deleteMessage(client *imapclient.Client, seqNum uint32) {
-	seqSet := imap.SeqSetNum(seqNum)
-	if err := client.Store(seqSet, &imap.StoreFlags{
-		Op: imap.StoreFlagsAdd, Silent: true,
-		Flags: []imap.Flag{imap.FlagDeleted},
-	}, nil).Close(); err != nil {
-		log.Printf("event=delete_failed seq=%d err=%q", seqNum, err)
-		return
-	}
-	if err := client.Expunge().Close(); err != nil {
-		log.Printf("event=expunge_failed seq=%d err=%q", seqNum, err)
-	}
-}
-
-// safeFilename returns a path inside attachDir that cannot escape via traversal.
 func safeFilename(attachDir string, emailID int64, rawName string) (string, error) {
 	if rawName == "" {
 		rawName = "attachment"
@@ -103,212 +100,305 @@ func safeFilename(attachDir string, emailID int64, rawName string) (string, erro
 		base = "attachment"
 	}
 	dir := filepath.Join(attachDir, strconv.FormatInt(emailID, 10))
-	dest := filepath.Join(dir, base)
-	// Boundary check — dest must remain inside attachDir
-	clean := filepath.Clean(attachDir) + string(filepath.Separator)
-	if !strings.HasPrefix(dest, clean) {
+	dest := filepath.Clean(filepath.Join(dir, base))
+	boundary := filepath.Clean(attachDir) + string(filepath.Separator)
+	if !strings.HasPrefix(dest, boundary) {
 		return "", fmt.Errorf("filename %q escapes attachment directory", rawName)
 	}
 	return dest, nil
 }
 
+// deleteMsg flags a message \Deleted and expunges it.
+// MUST only be called when no FetchCommand is open on this connection.
+func deleteMsg(c *imapclient.Client, seqNum uint32) {
+	log.Printf("event=delete_message seq=%d", seqNum)
+	if err := c.Store(imap.SeqSetNum(seqNum), &imap.StoreFlags{
+		Op: imap.StoreFlagsAdd, Silent: true,
+		Flags: []imap.Flag{imap.FlagDeleted},
+	}, nil).Close(); err != nil {
+		log.Printf("event=delete_flag_error seq=%d err=%v", seqNum, err)
+		return
+	}
+	if err := c.Expunge().Close(); err != nil {
+		log.Printf("event=expunge_error seq=%d err=%v", seqNum, err)
+	}
+}
+
+// ── Poll ───────────────────────────────────────────────────────────────────
+
+type candidate struct {
+	seqNum     uint32
+	msgID      string
+	senderAddr string
+	senderName string
+	subject    string
+}
+
 func Poll(sqldb *sql.DB, attachDir string) error {
 	cfg, err := LoadConfig(sqldb, attachDir)
 	if err != nil {
-		return fmt.Errorf("load imap config: %w", err)
+		return fmt.Errorf("poll: %w", err)
 	}
 
-	// Load security policy fresh on every poll so settings changes apply immediately
 	policy := security.LoadPolicy(sqldb)
 	log.Printf("event=poll_start mode=%s require_token=%v tokens_configured=%v",
 		policy.Mode, policy.TokenRequired, len(policy.Tokens) > 0)
 
+	// ── Connect ────────────────────────────────────────────────────────
 	addr := cfg.Host + ":" + cfg.Port
-	var client *imapclient.Client
-
 	tlsCfg := &tls.Config{ServerName: cfg.Host}
-	var debugWriter io.Writer
-	if cfg.Debug {
-		debugWriter = os.Stderr
-	}
-	clientOpts := &imapclient.Options{TLSConfig: tlsCfg, DebugWriter: debugWriter}
 
+	var dbgWriter io.Writer
+	if cfg.Debug {
+		dbgWriter = os.Stderr
+	}
+
+	var c *imapclient.Client
 	switch {
 	case cfg.TLS:
-		client, err = imapclient.DialTLS(addr, clientOpts)
+		log.Printf("event=dial_tls addr=%s", addr)
+		c, err = imapclient.DialTLS(addr, &imapclient.Options{TLSConfig: tlsCfg, DebugWriter: dbgWriter})
 	case cfg.StartTLS:
-		client, err = imapclient.DialStartTLS(addr, clientOpts)
+		log.Printf("event=dial_starttls addr=%s", addr)
+		c, err = imapclient.DialStartTLS(addr, &imapclient.Options{TLSConfig: tlsCfg, DebugWriter: dbgWriter})
 	default:
-		client, err = imapclient.DialInsecure(addr, &imapclient.Options{DebugWriter: debugWriter})
+		log.Printf("event=dial_plain addr=%s", addr)
+		c, err = imapclient.DialInsecure(addr, &imapclient.Options{DebugWriter: dbgWriter})
 	}
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", addr, err)
 	}
-	defer client.Close()
+	defer func() {
+		log.Printf("event=connection_close")
+		c.Close()
+	}()
 
-	if err := client.Login(cfg.User, cfg.Password).Wait(); err != nil {
-		return fmt.Errorf("login %s: %w", cfg.User, err)
+	// ── Login ──────────────────────────────────────────────────────────
+	log.Printf("event=login user=%s", cfg.User)
+	if err := c.Login(cfg.User, cfg.Password).Wait(); err != nil {
+		return fmt.Errorf("login: %w", err)
 	}
-	defer func() { client.Logout().Wait() }()
+	defer func() {
+		if logoutErr := c.Logout().Wait(); logoutErr != nil {
+			log.Printf("event=logout_error err=%v", logoutErr)
+		}
+	}()
 
-	// SELECT INBOX — the response directly tells us how many messages exist.
-	// We use this count to build a 1:N sequence set rather than running SEARCH,
-	// which avoids Dovecot compatibility issues with empty search criteria.
-	statusData, err := client.Select("INBOX", nil).Wait()
+	// ── SELECT INBOX ───────────────────────────────────────────────────
+	// NumMessages from SELECT avoids the SEARCH command entirely.
+	// Bare SEARCH with no arguments is rejected by Dovecot.
+	log.Printf("event=select_inbox")
+	selectData, err := c.Select("INBOX", nil).Wait()
 	if err != nil {
-		return fmt.Errorf("select inbox: %w", err)
+		return fmt.Errorf("SELECT INBOX: %w", err)
 	}
-	totalMessages := statusData.NumMessages
-	if totalMessages == 0 {
+	total := selectData.NumMessages
+	log.Printf("event=inbox_selected total=%d", total)
+
+	if total == 0 {
 		log.Printf("event=poll_complete accepted=0 rejected=0 reason=mailbox_empty")
 		return nil
 	}
-	log.Printf("event=poll_found total_messages=%d", totalMessages)
 
-	// Build a sequence set covering all messages: 1:*
+	fetchCount := total
+	if fetchCount > uint32(MaxEmailsPerRun) {
+		log.Printf("event=poll_capped total=%d cap=%d", fetchCount, MaxEmailsPerRun)
+		fetchCount = uint32(MaxEmailsPerRun)
+	}
+
 	seqSet := imap.SeqSet{}
-	seqSet.AddRange(1, totalMessages)
-	seqNums := []uint32{}
-	for i := uint32(1); i <= totalMessages; i++ {
-		seqNums = append(seqNums, i)
+	seqSet.AddRange(1, fetchCount)
+
+	// ── PASS 1: collect ALL envelopes into memory, then close ──────────
+	// Using .Collect() on the FetchCommand reads every message and closes
+	// the command automatically before we return. This is essential:
+	// deleteMsg (which calls Expunge) must not run while a FetchCommand
+	// is open or Dovecot will return a protocol error.
+	log.Printf("event=pass1_fetch_envelopes seq_range=1:%d", fetchCount)
+	envBufs, err := c.Fetch(seqSet, &imap.FetchOptions{
+		Envelope: true,
+		UID:      true,
+	}).Collect()
+	if err != nil {
+		return fmt.Errorf("FETCH envelopes: %w", err)
 	}
+	log.Printf("event=pass1_complete received=%d", len(envBufs))
 
-	// Cap per-run processing
-	if len(seqNums) > MaxEmailsPerRun {
-		log.Printf("event=poll_capped total=%d cap=%d", len(seqNums), MaxEmailsPerRun)
-		seqNums = seqNums[:MaxEmailsPerRun]
-		seqSet = imap.SeqSet{}
-		for _, n := range seqNums {
-			seqSet.AddNum(n)
-		}
-	}
+	// Evaluate each envelope: build candidates list and reject/duplicate list.
+	var candidates []candidate
+	var deleteSeqs []uint32
 
-	fetchCmd := client.Fetch(seqSet, &imap.FetchOptions{
-		UID:         true,
-		Envelope:    true,
-		BodySection: []*imap.FetchItemBodySection{{}},
-	})
-	defer fetchCmd.Close()
-
-	accepted, rejected := 0, 0
-
-	for {
-		msg := fetchCmd.Next()
-		if msg == nil {
-			break
-		}
-		buf, err := msg.Collect()
-		if err != nil {
-			log.Printf("event=collect_error err=%q", err)
-			continue
-		}
-
+	for _, buf := range envBufs {
 		seqNum := buf.SeqNum
 		env := buf.Envelope
+
 		if env == nil {
-			log.Printf("event=email_rejected reason=no_envelope seq=%d", seqNum)
-			deleteMessage(client, seqNum)
-			rejected++
+			log.Printf("event=skip seq=%d reason=no_envelope", seqNum)
+			deleteSeqs = append(deleteSeqs, seqNum)
 			continue
 		}
 
-		// ── Normalise sender address ──────────────────────────────────────
 		senderAddr := ""
-		if len(env.From) > 0 {
-			senderAddr = strings.ToLower(strings.TrimSpace(env.From[0].Addr()))
-		}
 		senderName := ""
 		if len(env.From) > 0 {
+			senderAddr = strings.ToLower(strings.TrimSpace(env.From[0].Addr()))
 			senderName = env.From[0].Name
 		}
+		log.Printf("event=envelope seq=%d sender=%q subject=%q msg_id=%q",
+			seqNum, senderAddr, env.Subject, env.MessageID)
 
-		// ── Duplicate check (cheap — before any body work) ────────────────
 		msgID := env.MessageID
 		if msgID == "" {
 			msgID = fmt.Sprintf("generated-%d-%s", time.Now().UnixNano(), senderAddr)
 		}
-		if exists, _ := email.Exists(sqldb, msgID); exists {
-			deleteMessage(client, seqNum)
+
+		// Duplicate check via message-ID
+		if exists, dbErr := email.Exists(sqldb, msgID); dbErr != nil {
+			log.Printf("event=duplicate_check_error seq=%d err=%v", seqNum, dbErr)
+		} else if exists {
+			log.Printf("event=skip seq=%d reason=duplicate msg_id=%q", seqNum, msgID)
+			deleteSeqs = append(deleteSeqs, seqNum)
 			continue
 		}
 
-		// ── Get body bytes ────────────────────────────────────────────────
-		var bodyBytes []byte
-		for _, section := range buf.BodySection {
-			bodyBytes = section.Bytes
-			break
+		// Security policy check
+		senderAllowed, senderErr := email.IsAllowedSender(sqldb, senderAddr)
+		if senderErr != nil {
+			log.Printf("event=sender_check_error seq=%d err=%v", seqNum, senderErr)
 		}
-
-		// ── Build ParsedEmail for validator ──────────────────────────────
-		senderAllowed, _ := email.IsAllowedSender(sqldb, senderAddr)
-
 		parsed := &security.ParsedEmail{
-			SenderAddr:    senderAddr,
-			Subject:       env.Subject,
-			Headers:       map[string]string{},
-			BodySizeBytes: int64(len(bodyBytes)),
+			SenderAddr: senderAddr,
+			Subject:    env.Subject,
+			Headers:    map[string]string{},
 		}
-		// We don't parse headers at this stage to avoid unnecessary work;
-		// header-based token extraction happens inside ValidateEmail via
-		// the Headers map. Populate it only for the auth header.
-		// (Full header parsing happens after validation passes.)
+		if valErr := security.ValidateEmail(parsed, senderAllowed, policy); valErr != nil {
+			ve := valErr.(*security.ValidationError)
+			log.Printf("event=skip seq=%d reason=policy code=%s sender=%q subject=%q",
+				seqNum, ve.Code, senderAddr, env.Subject)
+			deleteSeqs = append(deleteSeqs, seqNum)
+			continue
+		}
 
-		// ── Security validation — BEFORE any MIME parsing ─────────────────
-		if err := security.ValidateEmail(parsed, senderAllowed, policy); err != nil {
-			ve := err.(*security.ValidationError)
-			log.Printf("event=email_rejected reason=%s sender=%q subject=%q seq=%d ts=%s",
-				ve.Code, senderAddr, env.Subject, seqNum, time.Now().Format(time.RFC3339))
-			if policy.OnReject == "delete" {
-				deleteMessage(client, seqNum)
-			}
+		log.Printf("event=candidate seq=%d sender=%q subject=%q", seqNum, senderAddr, env.Subject)
+		candidates = append(candidates, candidate{
+			seqNum:     seqNum,
+			msgID:      msgID,
+			senderAddr: senderAddr,
+			senderName: senderName,
+			subject:    env.Subject,
+		})
+	}
+
+	// Delete rejects now — envelope FetchCommand is fully closed via Collect().
+	for _, seq := range deleteSeqs {
+		deleteMsg(c, seq)
+	}
+
+	if len(candidates) == 0 {
+		log.Printf("event=poll_complete accepted=0 rejected=%d reason=no_valid_candidates",
+			len(deleteSeqs))
+		return nil
+	}
+	log.Printf("event=pass2_start candidates=%d", len(candidates))
+
+	// ── PASS 2: fetch body for each candidate individually ─────────────
+	accepted, rejected := 0, 0
+
+	for _, cand := range candidates {
+		log.Printf("event=fetch_body seq=%d msg_id=%q", cand.seqNum, cand.msgID)
+
+		// One Collect() per message — closes the command before deleteMsg.
+		bodyBufs, fetchErr := c.Fetch(
+			imap.SeqSetNum(cand.seqNum),
+			&imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{{}}},
+		).Collect()
+
+		if fetchErr != nil {
+			log.Printf("event=fetch_body_error seq=%d msg_id=%q err=%v",
+				cand.seqNum, cand.msgID, fetchErr)
+			rejected++
+			continue
+		}
+		if len(bodyBufs) == 0 {
+			log.Printf("event=skip seq=%d msg_id=%q reason=empty_fetch_result", cand.seqNum, cand.msgID)
+			deleteMsg(c, cand.seqNum)
 			rejected++
 			continue
 		}
 
-		// ── Parse MIME (only for validated emails) ────────────────────────
-		e, attachments, err := parseMessage(bodyBytes, msgID, senderAddr, senderName, policy)
-		if err != nil {
-			log.Printf("event=parse_error msg_id=%q err=%q", msgID, err)
+		// Extract body bytes from BodySection slice (beta.5+ stores as slice).
+		var bodyBytes []byte
+		for _, section := range bodyBufs[0].BodySection {
+			if section.Bytes != nil {
+				bodyBytes = section.Bytes
+				break
+			}
+		}
+		if bodyBytes == nil {
+			log.Printf("event=skip seq=%d msg_id=%q reason=nil_body_section", cand.seqNum, cand.msgID)
+			deleteMsg(c, cand.seqNum)
+			rejected++
+			continue
+		}
+		log.Printf("event=body_received seq=%d msg_id=%q bytes=%d",
+			cand.seqNum, cand.msgID, len(bodyBytes))
+
+		// Parse MIME
+		e, attachments, parseErr := parseMessage(
+			bodyBytes, cand.msgID, cand.senderAddr, cand.senderName, policy,
+		)
+		if parseErr != nil {
+			log.Printf("event=parse_error seq=%d msg_id=%q err=%v",
+				cand.seqNum, cand.msgID, parseErr)
+			deleteMsg(c, cand.seqNum)
+			rejected++
 			continue
 		}
 
-		// ── Category assignment ───────────────────────────────────────────
+		// Category
 		if catID, ok := email.MatchCategory(sqldb, e.Subject); ok {
 			e.CategoryID = sql.NullInt64{Int64: catID, Valid: true}
-		} else {
-			// No match — fall back to the Inbox category so nothing is uncategorised
-			if inboxID := email.InboxCategoryID(sqldb); inboxID > 0 {
-				e.CategoryID = sql.NullInt64{Int64: inboxID, Valid: true}
-			}
+		} else if inboxID := email.InboxCategoryID(sqldb); inboxID > 0 {
+			e.CategoryID = sql.NullInt64{Int64: inboxID, Valid: true}
 		}
 
-		// ── Persist ───────────────────────────────────────────────────────
-		emailID, err := email.Save(sqldb, e)
-		if err != nil {
-			log.Printf("event=save_error msg_id=%q err=%q", msgID, err)
+		// Persist
+		emailID, saveErr := email.Save(sqldb, e)
+		if saveErr != nil {
+			log.Printf("event=save_error seq=%d msg_id=%q err=%v",
+				cand.seqNum, cand.msgID, saveErr)
+			rejected++
 			continue
 		}
+
 		for i := range attachments {
-			if err := saveAttachment(sqldb, emailID, &attachments[i], attachDir, policy); err != nil {
-				log.Printf("event=attachment_save_error email_id=%d err=%q", emailID, err)
+			if attErr := saveAttachment(sqldb, emailID, &attachments[i], attachDir, policy); attErr != nil {
+				log.Printf("event=attachment_error email_id=%d filename=%q err=%v",
+					emailID, attachments[i].OrigFilename, attErr)
 			}
 		}
 
-		deleteMessage(client, seqNum)
+		deleteMsg(c, cand.seqNum)
 		accepted++
-		log.Printf("event=email_accepted sender=%q subject=%q email_id=%d ts=%s",
-			senderAddr, e.Subject, emailID, time.Now().Format(time.RFC3339))
+		log.Printf("event=email_accepted seq=%d sender=%q subject=%q email_id=%d",
+			cand.seqNum, cand.senderAddr, e.Subject, emailID)
 	}
 
-	fetchCmd.Close()
-	log.Printf("event=poll_complete accepted=%d rejected=%d", accepted, rejected)
+	log.Printf("event=poll_complete accepted=%d rejected=%d skipped=%d",
+		accepted, rejected, len(deleteSeqs))
 	return nil
 }
 
-// StartPoller runs Poll in a background goroutine with context-aware shutdown
-// and exponential backoff on consecutive errors.
+// ── StartPoller ────────────────────────────────────────────────────────────
+
 func StartPoller(ctx context.Context, sqldb *sql.DB, attachDir string) {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("event=poller_panic recovered=%v", r)
+			}
+		}()
+
 		backoff := 30 * time.Second
 		const maxBackoff = 30 * time.Minute
 
@@ -321,7 +411,7 @@ func StartPoller(ctx context.Context, sqldb *sql.DB, attachDir string) {
 			}
 
 			if err := Poll(sqldb, attachDir); err != nil {
-				log.Printf("event=poll_error err=%q backoff=%s", err, backoff)
+				log.Printf("event=poll_error err=%v backoff=%s", err, backoff)
 				select {
 				case <-ctx.Done():
 					return
@@ -340,6 +430,8 @@ func StartPoller(ctx context.Context, sqldb *sql.DB, attachDir string) {
 			if mins <= 0 {
 				mins = 15
 			}
+			log.Printf("event=poll_sleeping minutes=%d", mins)
+
 			select {
 			case <-ctx.Done():
 				return
@@ -349,45 +441,60 @@ func StartPoller(ctx context.Context, sqldb *sql.DB, attachDir string) {
 	}()
 }
 
+// ── MIME parsing ───────────────────────────────────────────────────────────
+
 type pendingAttachment struct {
 	Filename     string
-	OrigFilename string // kept for display, never used as a path
+	OrigFilename string
 	MIMEType     string
 	Data         []byte
 }
 
-func parseMessage(raw []byte, msgID, senderEmail, senderName string, policy *security.Policy) (*email.Email, []pendingAttachment, error) {
+func parseMessage(
+	raw []byte,
+	msgID, senderEmail, senderName string,
+	policy *security.Policy,
+) (*email.Email, []pendingAttachment, error) {
+
 	mr, err := gomail.CreateReader(bytes.NewReader(raw))
-	if err != nil && !gomessage.IsUnknownCharset(err) {
-		return nil, nil, err
+	if err != nil {
+		if !gomessage.IsUnknownCharset(err) {
+			return nil, nil, fmt.Errorf("create reader: %w", err)
+		}
+		log.Printf("event=parse_charset_warning msg_id=%q err=%v", msgID, err)
 	}
 
 	e := &email.Email{
 		MessageID:   msgID,
 		SenderEmail: senderEmail,
 		SenderName:  senderName,
-		ReceivedAt:  time.Now(),
+		ReceivedAt:  time.Now().UTC(),
 	}
 
 	if mr != nil {
 		if subj, err := mr.Header.Subject(); err == nil {
 			e.Subject = subj
+		} else {
+			log.Printf("event=subject_parse_error msg_id=%q err=%v", msgID, err)
 		}
 		if date, err := mr.Header.Date(); err == nil {
 			e.ReceivedAt = date
 		}
 	}
 
-	var attachments []pendingAttachment
 	if mr == nil {
-		return e, attachments, nil
+		return e, nil, nil
 	}
 
+	var attachments []pendingAttachment
 	maxAttachBytes := policy.Limits.MaxAttachSizeMB * 1024 * 1024
 
 	for {
 		part, err := mr.NextPart()
 		if err != nil {
+			if err != io.EOF {
+				log.Printf("event=part_error msg_id=%q err=%v", msgID, err)
+			}
 			break
 		}
 
@@ -396,6 +503,7 @@ func parseMessage(raw []byte, msgID, senderEmail, senderName string, policy *sec
 			ct, _, _ := h.ContentType()
 			body, err := io.ReadAll(part.Body)
 			if err != nil {
+				log.Printf("event=inline_read_error msg_id=%q ct=%q err=%v", msgID, ct, err)
 				continue
 			}
 			switch {
@@ -416,6 +524,8 @@ func parseMessage(raw []byte, msgID, senderEmail, senderName string, policy *sec
 			}
 			data, err := io.ReadAll(part.Body)
 			if err != nil {
+				log.Printf("event=attachment_read_error filename=%q msg_id=%q err=%v",
+					origFilename, msgID, err)
 				continue
 			}
 			if maxAttachBytes > 0 && int64(len(data)) > maxAttachBytes {
@@ -423,46 +533,48 @@ func parseMessage(raw []byte, msgID, senderEmail, senderName string, policy *sec
 					origFilename, len(data), msgID)
 				continue
 			}
-			// Detect actual MIME type from content — never trust declared type
-			detectedMIME := security.DetectMIMEType(data)
 			attachments = append(attachments, pendingAttachment{
 				Filename:     origFilename,
 				OrigFilename: origFilename,
-				MIMEType:     detectedMIME,
+				MIMEType:     security.DetectMIMEType(data),
 				Data:         data,
 			})
 		}
 	}
 
+	log.Printf("event=parse_complete msg_id=%q has_text=%v has_html=%v attachments=%d",
+		msgID, e.BodyText != "", e.BodyHTML != "", len(attachments))
 	return e, attachments, nil
 }
 
-func saveAttachment(sqldb *sql.DB, emailID int64, att *pendingAttachment, attachDir string, policy *security.Policy) error {
+// ── Attachment persistence ─────────────────────────────────────────────────
+
+func saveAttachment(
+	sqldb *sql.DB,
+	emailID int64,
+	att *pendingAttachment,
+	attachDir string,
+	policy *security.Policy,
+) error {
 	dir := filepath.Join(attachDir, strconv.FormatInt(emailID, 10))
 	if err := os.MkdirAll(dir, 0750); err != nil {
-		return err
+		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-
 	dest, err := safeFilename(attachDir, emailID, att.Filename)
 	if err != nil {
 		return fmt.Errorf("unsafe filename: %w", err)
 	}
-
-	// Avoid collision with a nanosecond suffix
-	if _, err := os.Stat(dest); err == nil {
+	if _, statErr := os.Stat(dest); statErr == nil {
 		ext := filepath.Ext(dest)
-		base := strings.TrimSuffix(dest, ext)
-		dest = fmt.Sprintf("%s_%d%s", base, time.Now().UnixNano(), ext)
+		dest = fmt.Sprintf("%s_%d%s", strings.TrimSuffix(dest, ext), time.Now().UnixNano(), ext)
 	}
-
 	if err := os.WriteFile(dest, att.Data, 0640); err != nil {
-		return err
+		return fmt.Errorf("write %s: %w", dest, err)
 	}
-
 	return email.SaveAttachment(sqldb, &email.Attachment{
 		EmailID:    emailID,
-		Filename:   att.OrigFilename,          // display name for the UI
-		MIMEType:   att.MIMEType,              // sniffed, not declared
+		Filename:   att.OrigFilename,
+		MIMEType:   att.MIMEType,
 		Size:       int64(len(att.Data)),
 		StoredPath: dest,
 	})
