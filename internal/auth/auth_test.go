@@ -132,8 +132,13 @@ func TestCSRFRoundTrip(t *testing.T) {
 	if csrfCookie.MaxAge != 3600 {
 		t.Errorf("CSRF cookie MaxAge = %d, want 3600", csrfCookie.MaxAge)
 	}
-	if csrfCookie.SameSite != http.SameSiteLaxMode {
-		t.Errorf("CSRF cookie SameSite should be Lax for local network compatibility")
+	// SameSite is not set — browser defaults to Lax.
+	// Explicitly setting it to Strict or None both cause failures over plain HTTP.
+	if csrfCookie.SameSite == http.SameSiteStrictMode {
+		t.Error("CSRF cookie must not use SameSite=Strict (breaks LAN form POSTs)")
+	}
+	if csrfCookie.SameSite == http.SameSiteNoneMode {
+		t.Error("CSRF cookie must not use SameSite=None without Secure flag (browser drops it)")
 	}
 
 	// Build a request that carries the cookie and form value

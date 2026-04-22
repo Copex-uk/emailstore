@@ -150,18 +150,17 @@ func NewCSRFToken(w http.ResponseWriter) string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	token := hex.EncodeToString(b)
+	// SameSite is deliberately omitted (defaults to Lax in modern browsers).
+	// - SameSite=Strict breaks form POSTs on local network IPs over plain HTTP.
+	// - SameSite=None requires the Secure flag; without HTTPS the cookie is
+	//   silently dropped by every major browser, causing CSRF failures.
+	// - No SameSite / Lax works correctly on localhost AND LAN IPs over HTTP.
 	http.SetCookie(w, &http.Cookie{
-		Name:  "es_csrf",
-		Value: token,
-		Path:  "/",
+		Name:     "es_csrf",
+		Value:    token,
+		Path:     "/",
 		MaxAge:   3600,
 		HttpOnly: false,
-		// SameSite=None with no Secure flag — required for plain HTTP on LAN IPs.
-		// Strict/Lax both cause the cookie to be dropped on form POSTs when the
-		// browser considers the context "cross-site" (which it does for 192.168.x.x
-		// over HTTP). Since this app runs on a private network without HTTPS,
-		// SameSite=None is the only mode that reliably delivers the cookie.
-		SameSite: http.SameSiteNoneMode,
 	})
 	return token
 }
