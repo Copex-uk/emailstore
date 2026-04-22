@@ -85,25 +85,36 @@ func safeFilename(attachDir string, emailID int64, rawName string) (string, erro
 	return dest, nil
 }
 
-// deleteMsg flags \Deleted then expunges. MUST be called only when no
-// FetchCommand is open — Dovecot rejects Store/Expunge otherwise.
-func deleteMsg(c *imapclient.Client, seqNum uint32) {
-	log.Printf("event=delete_message seq=%d", seqNum)
-	if err := c.Store(imap.SeqSetNum(seqNum), &imap.StoreFlags{
+// deleteMsgByUID flags \Deleted by UID then expunges only that UID.
+// UIDs are permanent — unlike sequence numbers, they do not shift when
+// earlier messages are expunged. This is the correct way to delete in a
+// multi-message poll where we process and expunge incrementally.
+// MUST be called only when no FetchCommand is open on this connection.
+func deleteMsgByUID(c *imapclient.Client, uid imap.UID) {
+	log.Printf("event=delete_message uid=%d", uid)
+	uidSet := imap.UIDSetNum(uid)
+	if err := c.Store(uidSet, &imap.StoreFlags{
 		Op: imap.StoreFlagsAdd, Silent: true,
 		Flags: []imap.Flag{imap.FlagDeleted},
 	}, nil).Close(); err != nil {
-		log.Printf("event=store_deleted_flag_error seq=%d err=%v", seqNum, err)
+		log.Printf("event=store_deleted_flag_error uid=%d err=%v", uid, err)
 		return
 	}
-	if err := c.Expunge().Close(); err != nil {
-		log.Printf("event=expunge_error seq=%d err=%v", seqNum, err)
+	// UIDExpunge removes only messages matching this UID set that have \Deleted set.
+	// Requires UIDPLUS — Dovecot supports this. Falls back gracefully if not available.
+	if err := c.UIDExpunge(uidSet).Close(); err != nil {
+		log.Printf("event=uid_expunge_error uid=%d err=%v — trying plain expunge", uid, err)
+		// Fallback: plain EXPUNGE removes ALL \Deleted messages
+		if err2 := c.Expunge().Close(); err2 != nil {
+			log.Printf("event=expunge_error uid=%d err=%v", uid, err2)
+		}
 	}
 }
 
 type candidate struct {
-	seqNum                  uint32
-	msgID, senderAddr, senderName, subject string
+	seqNum                                  uint32
+	uid                                     imap.UID
+	msgID, senderAddr, senderName, subject  string
 }
 
 // Poll connects, selects INBOX, and processes all messages.
@@ -194,15 +205,15 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 		return nil
 	}
 
-	var cands    []candidate
-	var delSeqs  []uint32
+	var cands   []candidate
+	var delUIDs []imap.UID  // messages to delete without storing (dupes/rejects)
 
 	for _, buf := range envBufs {
 		seq := buf.SeqNum
 		env := buf.Envelope
 		if env == nil {
 			log.Printf("event=skip seq=%d reason=nil_envelope", seq)
-			delSeqs = append(delSeqs, seq)
+			delUIDs = append(delUIDs, buf.UID)
 			continue
 		}
 
@@ -224,8 +235,8 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 			log.Printf("event=duplicate_check_error seq=%d err=%v", seq, dbErr)
 			continue // DB error — skip without deleting, retry next poll
 		} else if exists {
-			log.Printf("event=skip seq=%d reason=duplicate msg_id=%q", seq, msgID)
-			delSeqs = append(delSeqs, seq)
+			log.Printf("event=skip seq=%d uid=%d reason=duplicate msg_id=%q", seq, buf.UID, msgID)
+			delUIDs = append(delUIDs, buf.UID)
 			continue
 		}
 
@@ -241,24 +252,24 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 			SenderAddr: senderAddr, Subject: env.Subject, Headers: map[string]string{},
 		}, allowed, policy); valErr != nil {
 			ve := valErr.(*security.ValidationError)
-			log.Printf("event=skip seq=%d reason=policy code=%s sender=%q", seq, ve.Code, senderAddr)
-			delSeqs = append(delSeqs, seq)
+			log.Printf("event=skip seq=%d uid=%d reason=policy code=%s sender=%q", seq, buf.UID, ve.Code, senderAddr)
+			delUIDs = append(delUIDs, buf.UID)
 			continue
 		}
 
-		log.Printf("event=candidate seq=%d sender=%q subject=%q", seq, senderAddr, env.Subject)
-		cands = append(cands, candidate{seq, msgID, senderAddr, senderName, env.Subject})
+		log.Printf("event=candidate seq=%d uid=%d sender=%q subject=%q", seq, buf.UID, senderAddr, env.Subject)
+		cands = append(cands, candidate{seq, buf.UID, msgID, senderAddr, senderName, env.Subject})
 	}
 
-	// Delete rejects/dupes — FetchCommand is closed, safe to call Store/Expunge
-	log.Printf("event=pass1_results candidates=%d to_delete=%d", len(cands), len(delSeqs))
-	for _, seq := range delSeqs {
-		deleteMsg(c, seq)
+	// Delete rejects/dupes by UID — UIDs are stable across expunge, seq nums are not.
+	log.Printf("event=pass1_results candidates=%d to_delete=%d", len(cands), len(delUIDs))
+	for _, uid := range delUIDs {
+		deleteMsgByUID(c, uid)
 	}
 
 	if len(cands) == 0 {
 		log.Printf("event=poll_complete accepted=0 rejected=%d skipped=%d reason=no_valid_candidates",
-			len(delSeqs), 0)
+			len(delUIDs), 0)
 		return nil
 	}
 
@@ -269,22 +280,23 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 	accepted, rejected := 0, 0
 
 	for _, cand := range cands {
-		log.Printf("event=fetch_body seq=%d msg_id=%q sender=%q subject=%q",
-			cand.seqNum, cand.msgID, cand.senderAddr, cand.subject)
+		log.Printf("event=fetch_body seq=%d uid=%d msg_id=%q sender=%q subject=%q",
+			cand.seqNum, cand.uid, cand.msgID, cand.senderAddr, cand.subject)
 
-		// Collect() closes the command before we return — safe to deleteMsg after
+		// Fetch by UID — immune to sequence number shifts caused by prior expunges
+		uidSet := imap.UIDSetNum(cand.uid)
 		bodyBufs, fErr := c.Fetch(
-			imap.SeqSetNum(cand.seqNum),
-			&imap.FetchOptions{BodySection: []*imap.FetchItemBodySection{bodySection}},
+			uidSet,
+			&imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{bodySection}},
 		).Collect()
 		if fErr != nil {
-			log.Printf("event=fetch_body_error seq=%d err=%v", cand.seqNum, fErr)
+			log.Printf("event=fetch_body_error seq=%d uid=%d err=%v", cand.seqNum, cand.uid, fErr)
 			rejected++
 			continue // keep on server for retry
 		}
 		if len(bodyBufs) == 0 {
-			log.Printf("event=skip seq=%d reason=no_body_buffer", cand.seqNum)
-			deleteMsg(c, cand.seqNum)
+			log.Printf("event=skip seq=%d uid=%d reason=no_body_buffer", cand.seqNum, cand.uid)
+			deleteMsgByUID(c, cand.uid)
 			rejected++
 			continue
 		}
@@ -302,8 +314,8 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 			}
 		}
 		if len(bodyBytes) == 0 {
-			log.Printf("event=skip seq=%d reason=empty_body_bytes", cand.seqNum)
-			deleteMsg(c, cand.seqNum)
+			log.Printf("event=skip seq=%d uid=%d reason=empty_body_bytes", cand.seqNum, cand.uid)
+			deleteMsgByUID(c, cand.uid)
 			rejected++
 			continue
 		}
@@ -311,8 +323,8 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 
 		e, atts, pErr := parseMessage(bodyBytes, cand.msgID, cand.senderAddr, cand.senderName, policy)
 		if pErr != nil {
-			log.Printf("event=parse_error seq=%d err=%v", cand.seqNum, pErr)
-			deleteMsg(c, cand.seqNum)
+			log.Printf("event=parse_error seq=%d uid=%d err=%v", cand.seqNum, cand.uid, pErr)
+			deleteMsgByUID(c, cand.uid)
 			rejected++
 			continue
 		}
@@ -337,14 +349,14 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 			}
 		}
 
-		deleteMsg(c, cand.seqNum)
+		deleteMsgByUID(c, cand.uid)
 		accepted++
-		log.Printf("event=email_accepted seq=%d sender=%q subject=%q email_id=%d atts=%d",
-			cand.seqNum, cand.senderAddr, e.Subject, emailID, len(atts))
+		log.Printf("event=email_accepted seq=%d uid=%d sender=%q subject=%q email_id=%d atts=%d",
+			cand.seqNum, cand.uid, cand.senderAddr, e.Subject, emailID, len(atts))
 	}
 
 	log.Printf("event=poll_complete accepted=%d rejected=%d skipped=%d",
-		accepted, rejected, len(delSeqs))
+		accepted, rejected, len(delUIDs))
 	return nil
 }
 
