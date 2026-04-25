@@ -305,6 +305,40 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 				log.Printf("settings categories: set retain_days id=%s days=%d: %v", id, days, err)
 			}
 		}
+	case "edit":
+		id := r.FormValue("id")
+		name := r.FormValue("name")
+		color := r.FormValue("color")
+		if id == "" || name == "" {
+			break
+		}
+		// Protect inbox name — allow color change but not rename
+		var slug string
+		if err := h.DB.QueryRow(`SELECT slug FROM categories WHERE id = ?`, id).Scan(&slug); err != nil {
+			log.Printf("settings categories: edit lookup id=%s: %v", id, err)
+			break
+		}
+		if slug == "inbox" {
+			// Inbox: allow color change only, ignore name change
+			if color == "" {
+				color = "#6366f1"
+			}
+			if _, err := h.DB.Exec(`UPDATE categories SET color = ? WHERE id = ?`, color, id); err != nil {
+				log.Printf("settings categories: edit inbox color id=%s: %v", id, err)
+			}
+		} else {
+			if color == "" {
+				color = "#6366f1"
+			}
+			// Regenerate slug from new name
+			newSlug := toSlug(name)
+			if _, err := h.DB.Exec(
+				`UPDATE categories SET name = ?, slug = ?, color = ? WHERE id = ?`,
+				name, newSlug, color, id,
+			); err != nil {
+				log.Printf("settings categories: edit id=%s name=%q: %v", id, name, err)
+			}
+		}
 	case "delete_rule":
 		ruleID := r.FormValue("rule_id")
 		if ruleID != "" {

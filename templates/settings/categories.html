@@ -24,6 +24,7 @@
     <h1>Categories</h1>
     <p class="muted">Emails can be auto-categorised by putting <code>[slug]</code> at the start of the subject line, or by adding subject match rules below.</p>
     {{if .Success}}<p class="alert alert-success">{{.Success}}</p>{{end}}
+
     <form method="POST" action="/settings/categories" class="settings-form inline-form">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="action" value="add">
@@ -31,45 +32,95 @@
       <input type="color" name="color" value="#6366f1">
       <button type="submit" class="btn btn-primary">Add category</button>
     </form>
-    <table class="data-table">
-      <thead><tr><th>Name</th><th>Slug</th><th>Color</th><th>Auto-delete after</th><th></th></tr></thead>
+
+    <table class="data-table" style="margin-top:1.25rem">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Slug</th>
+          <th>Auto-delete after</th>
+          <th></th>
+        </tr>
+      </thead>
       <tbody>
         {{range .Categories}}
-        <tr>
-          <td><span class="cat-dot" style="background:{{.Color}}"></span> {{.Name}}</td>
+        <!-- Display row -->
+        <tr id="row-{{.ID}}" class="cat-display-row">
+          <td>
+            <span class="cat-dot" style="background:{{.Color}}"></span>
+            {{.Name}}
+          </td>
           <td><code>{{.Slug}}</code></td>
-          <td><span style="background:{{.Color}};display:inline-block;width:24px;height:16px;border-radius:3px"></span></td>
           <td>
             <form method="POST" action="/settings/categories" style="display:flex;gap:0.4rem;align-items:center">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="action" value="set_retain">
               <input type="hidden" name="id" value="{{.ID}}">
-              <input type="number" name="retain_days" value="{{.RetainDays}}" min="0" max="3650"
-                     style="width:80px" title="0 = keep forever">
+              <input type="number" name="retain_days" value="{{.RetainDays}}"
+                     min="0" max="3650" style="width:72px" title="0 = keep forever">
               <span class="muted" style="font-size:0.8rem">days</span>
               <button type="submit" class="btn btn-sm">Set</button>
             </form>
           </td>
-          <td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm" onclick="showEdit({{.ID}})">Edit</button>
             {{if eq .Slug "inbox"}}
-              <span class="muted" style="font-size:0.8rem">protected</span>
+              <span class="muted" style="font-size:0.8rem;margin-left:0.4rem">protected</span>
             {{else}}
-            <form method="POST" action="/settings/categories">
+            <form method="POST" action="/settings/categories" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
               <input type="hidden" name="action" value="delete">
               <input type="hidden" name="id" value="{{.ID}}">
-              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+              <button type="submit" class="btn btn-sm btn-danger" style="margin-left:0.3rem">Delete</button>
             </form>
             {{end}}
           </td>
         </tr>
+        <!-- Inline edit row — hidden until Edit clicked -->
+        <tr id="edit-{{.ID}}" class="cat-edit-row" style="display:none">
+          <td colspan="4">
+            <form method="POST" action="/settings/categories" class="cat-edit-form">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="action" value="edit">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <div class="cat-edit-fields">
+                {{if eq .Slug "inbox"}}
+                <span class="field-hint" style="align-self:center">Inbox name is fixed</span>
+                {{else}}
+                <label class="field-label" style="flex:1;min-width:140px">Name
+                  <input type="text" name="name" value="{{.Name}}" required class="field-input">
+                </label>
+                {{end}}
+                <label class="field-label">Colour
+                  <input type="color" name="color" value="{{.Color}}" style="height:38px;width:56px;padding:2px 4px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;background:var(--surface)">
+                </label>
+                <div style="display:flex;gap:0.5rem;align-items:flex-end">
+                  <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                  <button type="button" class="btn btn-sm" onclick="hideEdit({{.ID}})">Cancel</button>
+                </div>
+              </div>
+            </form>
+          </td>
+        </tr>
         {{else}}
-        <tr><td colspan="5" class="empty">No categories yet.</td></tr>
+        <tr><td colspan="4" class="empty">No categories yet.</td></tr>
         {{end}}
       </tbody>
     </table>
-    <p class="muted" style="margin-top:0.75rem">Set to 0 to keep emails forever. You can also set auto-delete per email using the subject tag format <code>[slug:days]</code> — e.g. <code>[inbox:30]</code> sets that category to delete after 30 days.</p>
+    <p class="muted" style="margin-top:0.75rem">Set auto-delete to 0 to keep emails forever. You can also set it per email using <code>[slug:days]</code> in the subject — e.g. <code>[inbox:30]</code>.</p>
   </main>
 </div>
 <script src="/static/theme.js"></script>
+<script>
+function showEdit(id) {
+  document.getElementById('row-' + id).style.display = 'none';
+  document.getElementById('edit-' + id).style.display = '';
+  var input = document.querySelector('#edit-' + id + ' input[name="name"]');
+  if (input) input.focus();
+}
+function hideEdit(id) {
+  document.getElementById('edit-' + id).style.display = 'none';
+  document.getElementById('row-' + id).style.display = '';
+}
+</script>
 </body></html>{{end}}

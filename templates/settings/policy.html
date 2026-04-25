@@ -83,10 +83,10 @@
       <p class="muted">Restrict web access to specific IP addresses or subnets. Leave blank to allow connections from any IP. Enter one or more CIDRs or bare IPs, comma-separated.</p>
       <label>Allowed subnets
         <input type="text" name="allowed_subnets" value="{{.AllowedSubnets}}"
-               placeholder="192.168.1.0/24, 10.0.0.5">
-        <span class="field-hint">Examples: <code>192.168.1.0/24</code> (whole subnet) &nbsp;·&nbsp; <code>10.0.0.5</code> (single IP) &nbsp;·&nbsp; <code>192.168.0.0/16</code> (large range). Separate multiple entries with commas.</span>
+               placeholder="Allow all — enter subnet/s to restrict">
+        <span class="field-hint">Examples: <code>192.168.1.0/24</code> (whole subnet) &nbsp;·&nbsp; <code>10.0.0.5</code> (single IP) &nbsp;·&nbsp; <code>192.168.0.0/16, 10.0.0.0/8</code> (multiple, comma-separated)</span>
       </label>
-      {{if .AllowedSubnets}}<p class="alert alert-warning">⚠ IP filtering is active. If you lose access, connect from an allowed IP or edit the database directly to clear this setting.</p>{{end}}
+      {{if .AllowedSubnets}}<p class="alert alert-warning">⚠ IP filtering is active. If you lose access, connect from an allowed IP or clear it with: <code>sqlite3 data/emailstore.db "DELETE FROM settings WHERE key='allowed_subnets'"</code></p>{{end}}
 
       <button type="submit" class="btn btn-primary">Save policy</button>
     </form>
