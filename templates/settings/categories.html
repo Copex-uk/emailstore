@@ -32,13 +32,24 @@
       <button type="submit" class="btn btn-primary">Add category</button>
     </form>
     <table class="data-table">
-      <thead><tr><th>Name</th><th>Slug</th><th>Color</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Slug</th><th>Color</th><th>Auto-delete after</th><th></th></tr></thead>
       <tbody>
         {{range .Categories}}
         <tr>
           <td><span class="cat-dot" style="background:{{.Color}}"></span> {{.Name}}</td>
           <td><code>{{.Slug}}</code></td>
           <td><span style="background:{{.Color}};display:inline-block;width:24px;height:16px;border-radius:3px"></span></td>
+          <td>
+            <form method="POST" action="/settings/categories" style="display:flex;gap:0.4rem;align-items:center">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="action" value="set_retain">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <input type="number" name="retain_days" value="{{.RetainDays}}" min="0" max="3650"
+                     style="width:80px" title="0 = keep forever">
+              <span class="muted" style="font-size:0.8rem">days</span>
+              <button type="submit" class="btn btn-sm">Set</button>
+            </form>
+          </td>
           <td>
             {{if eq .Slug "inbox"}}
               <span class="muted" style="font-size:0.8rem">protected</span>
@@ -53,10 +64,11 @@
           </td>
         </tr>
         {{else}}
-        <tr><td colspan="4" class="empty">No categories yet.</td></tr>
+        <tr><td colspan="5" class="empty">No categories yet.</td></tr>
         {{end}}
       </tbody>
     </table>
+    <p class="muted" style="margin-top:0.75rem">Set to 0 to keep emails forever. You can also set auto-delete per email using the subject tag format <code>[slug:days]</code> — e.g. <code>[inbox:30]</code> sets that category to delete after 30 days.</p>
   </main>
 </div>
 <script src="/static/theme.js"></script>

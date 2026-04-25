@@ -79,6 +79,15 @@
         <input type="number" name="max_attach_mb" value="{{if .MaxAttachMB}}{{.MaxAttachMB}}{{else}}5{{end}}" min="1" max="100">
       </label>
 
+      <h2>IP allowlist</h2>
+      <p class="muted">Restrict web access to specific IP addresses or subnets. Leave blank to allow connections from any IP. Enter one or more CIDRs or bare IPs, comma-separated.</p>
+      <label>Allowed subnets
+        <input type="text" name="allowed_subnets" value="{{.AllowedSubnets}}"
+               placeholder="192.168.1.0/24, 10.0.0.5">
+        <span class="field-hint">Examples: <code>192.168.1.0/24</code> (whole subnet) &nbsp;·&nbsp; <code>10.0.0.5</code> (single IP) &nbsp;·&nbsp; <code>192.168.0.0/16</code> (large range). Separate multiple entries with commas.</span>
+      </label>
+      {{if .AllowedSubnets}}<p class="alert alert-warning">⚠ IP filtering is active. If you lose access, connect from an allowed IP or edit the database directly to clear this setting.</p>{{end}}
+
       <button type="submit" class="btn btn-primary">Save policy</button>
     </form>
   </main>

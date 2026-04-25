@@ -74,6 +74,46 @@ func main() {
 	// Background: IMAP poller — respects ctx for clean shutdown.
 	imappoller.StartPoller(ctx, sqldb, cfg.AttachDir)
 
+	// Background: email expiry — runs daily, deletes emails whose category
+	// has a retain_days > 0 and are older than that many days.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("expiry worker: panic recovered: %v", r)
+			}
+		}()
+		// Run once at startup to catch anything missed during downtime,
+		// then repeat every 24 hours.
+		runExpiry := func() {
+			ids, paths, err := email.DeleteExpiredEmails(sqldb)
+			if err != nil {
+				log.Printf("expiry worker: %v", err)
+				return
+			}
+			if len(ids) == 0 {
+				return
+			}
+			for _, p := range paths {
+				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+					log.Printf("expiry worker: remove file %q: %v", p, err)
+				}
+			}
+			log.Printf("event=expiry_complete deleted=%d files_removed=%d", len(ids), len(paths))
+		}
+		runExpiry()
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("expiry worker: stopping")
+				return
+			case <-t.C:
+				runExpiry()
+			}
+		}
+	}()
+
 	// Background: session pruner — runs hourly, exits when ctx is cancelled.
 	// Panics are recovered so a pruner failure cannot affect the HTTP server.
 	go func() {

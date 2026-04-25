@@ -93,7 +93,9 @@ func (h *Handler) Routes() http.Handler {
 	// Wrap entire mux with security headers
 	mux.Handle("/", authed)
 
-	return securityHeaders(mux)
+	// IP filter runs outermost — before security headers, before auth.
+	// This means blocked IPs get a 403 even for the login page.
+	return WithIPFilter(h.DB, securityHeaders(mux))
 }
 
 func securityHeaders(next http.Handler) http.Handler {

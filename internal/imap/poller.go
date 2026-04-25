@@ -335,6 +335,20 @@ func Poll(sqldb *sql.DB, attachDir string) error {
 			e.CategoryID = sql.NullInt64{Int64: inboxID, Valid: true}
 		}
 
+		// Parse optional retention override from subject tag e.g. [inbox:30].
+		// Format: [slug:days] — sets the retain_days for that category if not already set.
+		if days, slug := parseRetentionTag(e.Subject); days > 0 && slug != "" {
+			if cat, err := email.CategoryBySlug(sqldb, slug); err == nil {
+				if cat.RetainDays == 0 {
+					if err := email.SetCategoryRetainDays(sqldb, cat.ID, days); err != nil {
+						log.Printf("event=set_retain_days cat=%q days=%d err=%v", slug, days, err)
+					} else {
+						log.Printf("event=set_retain_days cat=%q cat_id=%d days=%d subject=%q", slug, cat.ID, days, e.Subject)
+					}
+				}
+			}
+		}
+
 		emailID, sErr := email.Save(sqldb, e)
 		if sErr != nil {
 			log.Printf("event=save_error seq=%d err=%v", cand.seqNum, sErr)
@@ -485,6 +499,33 @@ func parseMessage(raw []byte, msgID, senderEmail, senderName string, policy *sec
 	log.Printf("event=parse_complete msg_id=%q has_text=%v has_html=%v atts=%d subject=%q",
 		msgID, e.BodyText != "", e.BodyHTML != "", len(atts), e.Subject)
 	return e, atts, nil
+}
+
+// parseRetentionTag parses [slug:days] from the start of a subject line.
+// Returns (days, slug) or (0, "") if no valid tag is present.
+// Example: "[inbox:30] Your invoice" → (30, "inbox")
+// Example: "[work:90] Q1 report"    → (90, "work")
+func parseRetentionTag(subject string) (days int, slug string) {
+	s := strings.ToLower(strings.TrimSpace(subject))
+	if !strings.HasPrefix(s, "[") {
+		return 0, ""
+	}
+	end := strings.Index(s, "]")
+	if end < 2 {
+		return 0, ""
+	}
+	tag := s[1:end] // e.g. "inbox:30"
+	colon := strings.LastIndex(tag, ":")
+	if colon < 1 {
+		return 0, ""
+	}
+	slugPart := strings.TrimSpace(tag[:colon])
+	daysPart := strings.TrimSpace(tag[colon+1:])
+	d, err := strconv.Atoi(daysPart)
+	if err != nil || d <= 0 {
+		return 0, ""
+	}
+	return d, slugPart
 }
 
 func saveAttachment(sqldb *sql.DB, emailID int64, att *pendingAttachment, attachDir string, _ *security.Policy) error {

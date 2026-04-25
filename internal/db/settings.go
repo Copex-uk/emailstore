@@ -27,6 +27,9 @@ const (
 	KeySecurityMaxEmailMB     = "security_max_email_mb"
 	KeySecurityMaxAttachments = "security_max_attachments"
 	KeySecurityMaxAttachMB    = "security_max_attach_mb"
+
+	// IP allowlist — comma-separated CIDRs or bare IPs. Empty = allow all.
+	KeyAllowedSubnets = "allowed_subnets"
 )
 
 // SettingGet returns the value for key, or ("", nil) if the key does not exist.

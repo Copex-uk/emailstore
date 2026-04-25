@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,11 +27,25 @@ func Open(dbPath string) (*sql.DB, error) {
 func migrate(db *sql.DB) error {
 	for i, stmt := range migrations {
 		if _, err := db.Exec(stmt); err != nil {
+			// ALTER TABLE ADD COLUMN fails with "duplicate column name" on
+			// existing databases — that is expected and safe to ignore.
+			if isDuplicateColumnErr(err) {
+				continue
+			}
 			return fmt.Errorf("migration %d: %w", i, err)
 		}
 	}
 	log.Println("db: migrations applied")
 	return nil
+}
+
+// isDuplicateColumnErr returns true for SQLite "duplicate column name" errors,
+// which occur when ALTER TABLE ADD COLUMN is run on a column that already exists.
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "duplicate column name")
 }
 
 var migrations = []string{
@@ -53,12 +68,19 @@ var migrations = []string{
 	)`,
 
 	`CREATE TABLE IF NOT EXISTS categories (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		name       TEXT NOT NULL UNIQUE,
-		slug       TEXT NOT NULL UNIQUE,
-		color      TEXT NOT NULL DEFAULT '#6366f1',
-		created_at INTEGER NOT NULL DEFAULT (unixepoch())
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL UNIQUE,
+		slug        TEXT NOT NULL UNIQUE,
+		color       TEXT NOT NULL DEFAULT '#6366f1',
+		retain_days INTEGER NOT NULL DEFAULT 0,
+		created_at  INTEGER NOT NULL DEFAULT (unixepoch())
 	)`,
+
+	// Add retain_days to existing installs that pre-date this column.
+	// SQLite does not support ADD COLUMN IF NOT EXISTS so we use a no-op
+	// approach: the migration is the ALTER TABLE itself, but we catch the
+	// "duplicate column" error in the migrate() function below.
+	`ALTER TABLE categories ADD COLUMN retain_days INTEGER NOT NULL DEFAULT 0`,
 
 	`CREATE TABLE IF NOT EXISTS category_rules (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,

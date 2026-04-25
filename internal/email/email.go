@@ -2,6 +2,7 @@ package email
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -30,10 +31,11 @@ type Attachment struct {
 }
 
 type Category struct {
-	ID    int64
-	Name  string
-	Slug  string
-	Color string
+	ID          int64
+	Name        string
+	Slug        string
+	Color       string
+	RetainDays  int // 0 = keep forever
 }
 
 func Save(db *sql.DB, e *Email) (int64, error) {
@@ -172,7 +174,7 @@ func SetCategory(db *sql.DB, emailID, categoryID int64) error {
 }
 
 func ListCategories(db *sql.DB) ([]*Category, error) {
-	rows, err := db.Query(`SELECT id, name, slug, color FROM categories ORDER BY CASE slug WHEN 'inbox' THEN 0 ELSE 1 END, name`)
+	rows, err := db.Query(`SELECT id, name, slug, color, retain_days FROM categories ORDER BY CASE slug WHEN 'inbox' THEN 0 ELSE 1 END, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +182,7 @@ func ListCategories(db *sql.DB) ([]*Category, error) {
 	var cats []*Category
 	for rows.Next() {
 		c := &Category{}
-		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.Color); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.Color, &c.RetainDays); err != nil {
 			return nil, err
 		}
 		cats = append(cats, c)
@@ -190,8 +192,8 @@ func ListCategories(db *sql.DB) ([]*Category, error) {
 
 func CategoryBySlug(db *sql.DB, slug string) (*Category, error) {
 	c := &Category{}
-	err := db.QueryRow(`SELECT id, name, slug, color FROM categories WHERE slug = ?`, slug).
-		Scan(&c.ID, &c.Name, &c.Slug, &c.Color)
+	err := db.QueryRow(`SELECT id, name, slug, color, retain_days FROM categories WHERE slug = ?`, slug).
+		Scan(&c.ID, &c.Name, &c.Slug, &c.Color, &c.RetainDays)
 	return c, err
 }
 
@@ -232,6 +234,64 @@ func MatchCategory(db *sql.DB, subject string) (int64, bool) {
 	}
 
 	return 0, false
+}
+
+// DeleteExpiredEmails removes emails whose category has a retain_days > 0
+// and whose received_at is older than retain_days days.
+// Returns the IDs and attachment paths of deleted emails so the caller
+// can remove files from disk.
+func DeleteExpiredEmails(db *sql.DB) ([]int64, []string, error) {
+	rows, err := db.Query(`
+		SELECT e.id
+		FROM emails e
+		JOIN categories c ON e.category_id = c.id
+		WHERE c.retain_days > 0
+		  AND e.received_at < (unixepoch() - c.retain_days * 86400)
+	`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query expired emails: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil, nil
+	}
+
+	// Collect attachment paths before deletion (FK cascade removes rows)
+	var allPaths []string
+	for _, id := range ids {
+		paths, err := GetAttachmentPaths(db, id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get attachment paths email_id=%d: %w", id, err)
+		}
+		allPaths = append(allPaths, paths...)
+	}
+
+	// Delete emails — FK ON DELETE CASCADE removes attachment rows
+	for _, id := range ids {
+		if _, err := db.Exec(`DELETE FROM emails WHERE id = ?`, id); err != nil {
+			return nil, nil, fmt.Errorf("delete email_id=%d: %w", id, err)
+		}
+	}
+
+	return ids, allPaths, nil
+}
+
+// SetCategoryRetainDays updates the retain_days for a category.
+func SetCategoryRetainDays(db *sql.DB, categoryID int64, days int) error {
+	_, err := db.Exec(`UPDATE categories SET retain_days = ? WHERE id = ?`, days, categoryID)
+	return err
 }
 
 func IsAllowedSender(db *sql.DB, email string) (bool, error) {

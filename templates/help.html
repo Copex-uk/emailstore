@@ -11,7 +11,7 @@
   <nav class="sidebar">
     <div class="sidebar-header"><a href="/" class="logo">EmailStore</a><button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle theme"><span class="theme-icon"></span></button></div>
     <ul class="nav-list">
-      <li><a href="/"        class="nav-item">Inbox</a></li>
+      <li><a href="/"         class="nav-item">Inbox</a></li>
       <li><a href="/settings" class="nav-item">Settings</a></li>
       <li><a href="/help"     class="nav-item active">Help</a></li>
     </ul>
@@ -28,12 +28,15 @@
 
     <nav class="help-toc">
       <a href="#security">Security policy</a>
+      <a href="#ip-allowlist">IP allowlist</a>
       <a href="#receiving">Receiving emails</a>
       <a href="#categories">Categories</a>
       <a href="#subject-tags">Subject line tags</a>
+      <a href="#auto-delete">Auto-delete</a>
       <a href="#senders">Allowed senders</a>
       <a href="#polling">Polling</a>
       <a href="#attachments">Attachments</a>
+      <a href="#download-delete">Download &amp; delete</a>
       <a href="#settings-ref">Settings reference</a>
       <a href="#providers">Provider settings</a>
     </nav>
@@ -43,68 +46,112 @@
       <p>EmailStore operates on a zero-trust model — all emails are rejected by default unless they pass the configured security checks. Configure this in <a href="/settings/policy">Settings → Security policy</a>.</p>
       <h3>Security modes</h3>
       <dl class="help-faq">
-        <dt>Strict (default, recommended)</dt>
-        <dd>Requires both an authorised sender AND a valid token in the email. The safest option — only emails explicitly allowed from both directions are stored.</dd>
+        <dt>Strict</dt>
+        <dd>Requires both an authorised sender AND a valid token in the email. The safest option — only emails explicitly permitted from both directions are stored.</dd>
         <dt>Balanced</dt>
-        <dd>Requires either an authorised sender OR a valid token. Useful when senders can't always add a subject tag but the token provides a second channel.</dd>
-        <dt>Relaxed</dt>
-        <dd>Requires only an authorised sender. No token needed. Simpler but relies entirely on the sender allowlist.</dd>
+        <dd>Requires either an authorised sender OR a valid token. Useful when senders can't always include a token but you still want a second layer of control.</dd>
+        <dt>Relaxed (default)</dt>
+        <dd>Requires only an authorised sender. No token needed. Simplest to use — just add a sender to the allowlist and emails start arriving.</dd>
       </dl>
       <h3>Token authentication</h3>
-      <p>Tokens add a second factor — even if an authorised sender's address is spoofed, the attacker also needs to know the token. Tokens are set in <a href="/settings/policy">Settings → Security policy</a>.</p>
-      <p>Add the token to the email subject line using this format:</p>
+      <p>Tokens add a second factor — even if an authorised sender's address is spoofed, the attacker also needs to know the secret token. Tokens are configured in <a href="/settings/policy">Settings → Security policy</a>.</p>
+      <p>Add the token to the subject line using this format — it can appear anywhere in the subject:</p>
       <div class="help-example">
         <div class="help-example-row">
           <code>Invoice [ES:mysecrettoken] Q1 2026</code>
           <span class="help-arrow">→</span>
           <span class="help-result">token <strong>mysecrettoken</strong> extracted and validated</span>
         </div>
+        <div class="help-example-row">
+          <code>[ES:mysecrettoken] Project update</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">also valid — token at the start</span>
+        </div>
       </div>
-      <p>Or use the <code>X-EmailStore-Auth</code> email header if your mail client supports custom headers.</p>
+      <p>Alternatively use the <code>X-EmailStore-Auth: yourtoken</code> email header if your mail client supports custom headers.</p>
       <p>Generate strong tokens with: <code>openssl rand -hex 16</code></p>
       <h3>Size limits</h3>
-      <p>Maximum email size, attachment count, and per-attachment size are all configurable. Emails or attachments that exceed the limits are rejected or skipped. Defaults are 10 MB per email, 5 attachments, 5 MB per attachment.</p>
+      <p>Maximum email size (default 10 MB), maximum attachments per email (default 5), and maximum per-attachment size (default 5 MB) are all configurable. Emails or attachments that exceed these limits are rejected or skipped with a log entry — they will not silently disappear.</p>
+    </section>
+
+    <section id="ip-allowlist">
+      <h2>IP allowlist</h2>
+      <p>You can restrict web access to EmailStore to specific IP addresses or subnets — for example, only your home network. Configure this in <a href="/settings/policy">Settings → Security policy → IP allowlist</a>.</p>
+      <p>Enter one or more CIDRs or bare IP addresses, comma-separated:</p>
+      <div class="help-example">
+        <div class="help-example-row">
+          <code>192.168.1.0/24</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">allow any IP in the 192.168.1.x range</span>
+        </div>
+        <div class="help-example-row">
+          <code>10.0.0.5</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">allow exactly one IP address</span>
+        </div>
+        <div class="help-example-row">
+          <code>192.168.1.0/24, 10.0.0.5, 172.16.0.0/12</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">allow multiple subnets and IPs</span>
+        </div>
+        <div class="help-example-row">
+          <code>(empty)</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">allow connections from any IP — no restriction</span>
+        </div>
+      </div>
+      <p>The filter applies to all connections — including the login page. If you set a subnet and then lose access, you will need to either connect from an allowed IP or edit the database directly to clear the setting:</p>
+      <div class="help-example">
+        <div class="help-example-row">
+          <code>sqlite3 data/emailstore.db "DELETE FROM settings WHERE key='allowed_subnets'"</code>
+        </div>
+      </div>
+      <p>IPv6 addresses and CIDRs are also supported (e.g. <code>2001:db8::/32</code>).</p>
     </section>
 
     <section id="receiving">
       <h2>Receiving emails</h2>
-      <p>EmailStore polls your dedicated mailbox on a timer (default: every 15 minutes). You can also trigger an immediate check by clicking <strong>Poll now</strong> in the inbox header or in Settings → Mailbox.</p>
+      <p>EmailStore polls your dedicated mailbox on a timer (default: every 15 minutes). You can trigger an immediate check by clicking <strong>Poll now</strong> in the inbox header or in <a href="/settings/mailbox">Settings → Mailbox</a>.</p>
       <p>Every email goes through this pipeline:</p>
       <ol class="help-steps">
-        <li><strong>Check the sender</strong> — if the sender is not on your allowed list, the email is permanently deleted from the mailbox without being read further.</li>
-        <li><strong>Check for duplicates</strong> — already-stored emails are skipped and deleted from the mailbox.</li>
-        <li><strong>Parse the email</strong> — subject, plain text body, HTML body, and any attachments are extracted.</li>
-        <li><strong>Assign a category</strong> — the subject line is checked for a tag (see below) and against any keyword rules you have set up.</li>
-        <li><strong>Store and delete</strong> — the email is saved to the local database, attachments are saved to disk, and the email is deleted from the mailbox.</li>
+        <li><strong>Fetch envelopes</strong> — sender, subject, and message ID are fetched for all messages in the mailbox (lightweight, no body downloaded yet).</li>
+        <li><strong>Duplicate check</strong> — already-stored message IDs are skipped. Duplicates are deleted from the mailbox without re-processing.</li>
+        <li><strong>Sender check</strong> — if the sender is not on your allowed list, the email is permanently deleted without being read further.</li>
+        <li><strong>Security policy check</strong> — the configured mode and token rules are applied. Rejected emails are deleted from the mailbox.</li>
+        <li><strong>Fetch body</strong> — only for emails that passed all checks. Full body is fetched by UID (stable across mailbox changes).</li>
+        <li><strong>Parse and categorise</strong> — subject, text body, HTML body, and attachments are extracted. Category is assigned via subject tag, keyword rule, or Inbox fallback.</li>
+        <li><strong>Store and delete</strong> — email saved to SQLite, attachments saved to disk, then the message is deleted from the mailbox.</li>
       </ol>
-      <p>The mailbox is always left clean — every processed email (accepted or rejected) is deleted from the server.</p>
+      <p>The mailbox is always left empty — every processed message (accepted or rejected) is deleted from the server.</p>
     </section>
 
     <section id="categories">
       <h2>Categories</h2>
-      <p>Categories let you organise emails. The default categories are Inbox, Work, Personal, Finance, and Other. You can create, rename, and delete categories in <a href="/settings/categories">Settings → Categories</a>.</p>
-      <p>Each category has a <strong>slug</strong> — a short lowercase identifier. The slug is auto-generated from the name when you create it (e.g. "Q1 Reports" → <code>q1-reports</code>). You can see each category's slug in Settings → Categories.</p>
-      <p>There are three ways an email gets assigned to a category:</p>
+      <p>Categories organise your emails into named groups shown in the sidebar. The default categories are Inbox, Work, Personal, Finance, and Other. Create and manage categories in <a href="/settings/categories">Settings → Categories</a>.</p>
+      <p>Each category has a <strong>slug</strong> — a short lowercase identifier auto-generated from the name (e.g. "Q1 Reports" → <code>q1-reports</code>). Slugs are used in subject line tags and the URL.</p>
+      <p><strong>Inbox is a protected category</strong> and cannot be deleted. All emails that don't match any other category are automatically placed in Inbox.</p>
+      <p>There are three ways an email gets assigned to a category, checked in this order:</p>
       <ul class="help-list">
-        <li><strong>Subject line tag</strong> — automatic, highest priority (see below)</li>
-        <li><strong>Keyword rule</strong> — automatic, checked if no subject tag matched</li>
-        <li><strong>Manual</strong> — use the dropdown when viewing an email</li>
+        <li><strong>Subject line tag</strong> — <code>[slug]</code> or <code>[slug:days]</code> at the start of the subject (highest priority)</li>
+        <li><strong>Keyword rule</strong> — a word or phrase match against the subject</li>
+        <li><strong>Inbox fallback</strong> — all unmatched emails land in Inbox</li>
       </ul>
+      <p>You can also manually reassign any email using the category dropdown when viewing it.</p>
     </section>
 
     <section id="subject-tags">
       <h2>Subject line tags</h2>
-      <p>The easiest way to auto-categorise an email is to put the category slug in square brackets at the very start of the subject line:</p>
+      <p>Put a category slug in square brackets at the very start of the subject to auto-categorise the email when it arrives:</p>
       <div class="help-example">
-        <div class="help-example-row">
-          <code>[invoices] Q1 receipt from supplier</code>
-          <span class="help-arrow">→</span>
-          <span class="help-result">assigned to <strong>Invoices</strong> category</span>
-        </div>
         <div class="help-example-row">
           <code>[work] Project Alpha update</code>
           <span class="help-arrow">→</span>
           <span class="help-result">assigned to <strong>Work</strong> category</span>
+        </div>
+        <div class="help-example-row">
+          <code>[finance] Invoice from supplier</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">assigned to <strong>Finance</strong> category</span>
         </div>
         <div class="help-example-row">
           <code>[personal] Holiday photos</code>
@@ -112,63 +159,109 @@
           <span class="help-result">assigned to <strong>Personal</strong> category</span>
         </div>
         <div class="help-example-row">
-          <code>No tag — just a normal subject</code>
+          <code>No tag — normal subject</code>
           <span class="help-arrow">→</span>
-          <span class="help-result">checked against keyword rules, or uncategorised</span>
+          <span class="help-result">checked against keyword rules, then placed in Inbox</span>
         </div>
       </div>
-      <p>The tag is case-insensitive — <code>[Invoices]</code>, <code>[INVOICES]</code>, and <code>[invoices]</code> all work the same way. The slug must exactly match a category slug in your system.</p>
+      <p>Tags are case-insensitive — <code>[Work]</code>, <code>[WORK]</code>, and <code>[work]</code> all work the same way.</p>
 
       <h3>Keyword rules</h3>
-      <p>If no subject tag is found, EmailStore checks the subject against any keyword rules you have configured. A rule is a word or phrase — if the subject contains it (case-insensitive), the email is assigned to that category.</p>
-      <p>For example, if you add the keyword rule <code>receipt</code> to the Finance category, then any email with "receipt" anywhere in the subject will be auto-categorised as Finance — even without a subject tag.</p>
-      <p>Add keyword rules in <a href="/settings/categories">Settings → Categories</a> by selecting a category and entering the keyword pattern.</p>
+      <p>If no subject tag is found, EmailStore checks the subject against keyword rules. A rule is a word or phrase — if the subject contains it anywhere (case-insensitive), the email is assigned to that category.</p>
+      <p>Example: add <code>receipt</code> as a keyword for the Finance category, and any email with "receipt" in the subject will be auto-categorised as Finance even without a <code>[finance]</code> tag.</p>
+      <p>Add rules in <a href="/settings/categories">Settings → Categories</a>.</p>
+    </section>
+
+    <section id="auto-delete">
+      <h2>Auto-delete (email retention)</h2>
+      <p>You can configure EmailStore to automatically delete emails after a set number of days. This keeps storage manageable for high-volume categories.</p>
+      <h3>Setting retention per category</h3>
+      <p>In <a href="/settings/categories">Settings → Categories</a>, each category has an <strong>Auto-delete after</strong> field. Enter the number of days to keep emails, or <strong>0</strong> to keep them forever (default).</p>
+      <h3>Setting retention via subject tag</h3>
+      <p>You can set retention directly from the subject line using the <code>[slug:days]</code> format. This sets the <em>category's</em> retain period to that value (if it isn't already set):</p>
+      <div class="help-example">
+        <div class="help-example-row">
+          <code>[inbox:30] Your receipt</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">inbox category → auto-delete after <strong>30 days</strong></span>
+        </div>
+        <div class="help-example-row">
+          <code>[work:90] Q1 report</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">work category → auto-delete after <strong>90 days</strong></span>
+        </div>
+        <div class="help-example-row">
+          <code>[finance:365] Annual statement</code>
+          <span class="help-arrow">→</span>
+          <span class="help-result">finance category → auto-delete after <strong>1 year</strong></span>
+        </div>
+      </div>
+      <p>EmailStore checks for expired emails at startup and then once every 24 hours. When emails are auto-deleted their attachment files are also removed from disk. The log will show <code>event=expiry_complete deleted=N</code> when emails are purged.</p>
+      <p>Setting a category back to <strong>0 days</strong> in Settings → Categories stops future auto-deletion — emails already stored are not affected.</p>
     </section>
 
     <section id="senders">
       <h2>Allowed senders</h2>
       <p>Only emails from addresses on your allowed list are ever stored. Everything else is immediately and permanently deleted from the mailbox — the body is never read and attachments are never touched.</p>
       <p>Addresses are matched case-insensitively. Manage your list in <a href="/settings/senders">Settings → Allowed senders</a>.</p>
-      <p>You can add a display name alongside each address — this is just a label for your reference inside EmailStore and has no effect on matching.</p>
+      <p>You can add a display name alongside each address — this is just a label for your reference and has no effect on matching.</p>
     </section>
 
     <section id="polling">
       <h2>Polling</h2>
       <p>EmailStore polls the mailbox automatically on a timer. The default interval is 15 minutes. Change it in <a href="/settings/mailbox">Settings → Mailbox</a> under Poll interval.</p>
-      <p><strong>Poll now</strong> triggers an immediate check without waiting for the timer. It's available in two places:</p>
+      <p><strong>Poll now</strong> triggers an immediate check without waiting for the timer. Available in two places:</p>
       <ul class="help-list">
-        <li>The <strong>inbox header</strong> — always visible at the top of the email list</li>
-        <li><strong>Settings → Mailbox</strong> — useful right after changing connection settings</li>
+        <li>The <strong>inbox header</strong> — the Poll now button is always visible at the top of the email list</li>
+        <li><strong>Settings → Mailbox</strong> — useful right after changing connection settings to verify they work</li>
       </ul>
-      <p>If a poll fails (connection error, wrong password, etc.) EmailStore uses exponential backoff — it waits 30 seconds, then 1 minute, then 2 minutes, up to a maximum of 30 minutes between retries. Successful polls reset the backoff.</p>
+      <p>If a poll fails (connection error, wrong password, etc.) EmailStore uses exponential backoff — it waits 30 seconds, then 1 minute, then 2 minutes, up to a maximum of 30 minutes between retries. Successful polls reset the backoff timer.</p>
+      <p>Enable <strong>Debug logging</strong> in Settings → Mailbox to see the full raw IMAP conversation in the logs — useful for diagnosing connection problems.</p>
     </section>
 
     <section id="attachments">
       <h2>Attachments</h2>
-      <p>Attachments are downloaded and stored locally in <code>data/attachments/</code>, organised by email ID. When viewing an email, attachments are listed at the bottom — click any one to download it.</p>
-      <p>You can set a maximum attachment size in <a href="/settings/general">Settings → General</a>. The default is 25 MB per attachment.</p>
+      <p>Attachments are downloaded and stored locally in <code>data/attachments/</code>, organised by email ID. When viewing an email, each attachment is listed at the bottom — click any one to download it individually.</p>
+      <p>You can set a maximum attachment size in <a href="/settings/general">Settings → General</a>. The default is 25 MB per attachment. Oversized attachments are skipped with a log entry; the rest of the email is still stored.</p>
+      <p>The actual content type is detected by sniffing the file content (not by trusting the declared MIME type), which guards against content-type spoofing.</p>
+    </section>
+
+    <section id="download-delete">
+      <h2>Downloading and deleting emails</h2>
+      <h3>Download</h3>
+      <p>When viewing an email, the <strong>↓ Download</strong> button exports the email for use outside EmailStore:</p>
+      <ul class="help-list">
+        <li><strong>No attachments</strong> — downloads a standard <code>.eml</code> file that can be opened in any mail client (Outlook, Apple Mail, Thunderbird, etc.)</li>
+        <li><strong>Has attachments</strong> — downloads a <code>.zip</code> file containing the <code>.eml</code> plus all attachment files together</li>
+      </ul>
+      <h3>Delete</h3>
+      <p>Click the <strong>Delete</strong> button when viewing an email to permanently remove it from EmailStore. A confirmation dialog requires you to type the word <strong>delete</strong> before the action proceeds. This prevents accidental deletion.</p>
+      <p>Deleting an email also removes its attachment files from disk. This cannot be undone.</p>
     </section>
 
     <section id="settings-ref">
       <h2>Settings reference</h2>
       <dl class="help-faq">
         <dt><a href="/settings/mailbox">Mailbox</a></dt>
-        <dd>IMAP host, port, username, password, connection mode (TLS / STARTTLS / plain), poll interval, and debug logging toggle. Also has the Poll now button.</dd>
+        <dd>IMAP host, port, username, password, connection mode (TLS / STARTTLS / plain), poll interval in minutes, and debug logging toggle. Also has the Poll now button.</dd>
 
         <dt><a href="/settings/senders">Allowed senders</a></dt>
-        <dd>The list of email addresses permitted to send emails to the store. Anything not on this list is deleted on arrival.</dd>
+        <dd>The list of email addresses permitted to send emails to the store. Anything not on this list is deleted on arrival without being read.</dd>
 
         <dt><a href="/settings/categories">Categories</a></dt>
-        <dd>Create and delete categories, view their slugs (used in subject line tags), and manage keyword rules for automatic categorisation.</dd>
+        <dd>Create and delete categories, view their slugs, set per-category auto-delete retention periods, and manage keyword rules for automatic categorisation.</dd>
 
-        <dt><a href="/settings/security">Security</a></dt>
-        <dd>Change the login password and configure the session timeout (how long you stay logged in before being asked to log in again).</dd>
+        <dt><a href="/settings/policy">Security policy</a></dt>
+        <dd>Security mode (strict / balanced / relaxed), token authentication settings, size limits, and the IP allowlist for restricting web access to specific subnets.</dd>
+
+        <dt><a href="/settings/security">Password &amp; session</a></dt>
+        <dd>Change the login password and configure the session timeout (how long before you are asked to log in again).</dd>
 
         <dt><a href="/settings/general">General</a></dt>
-        <dd>Maximum attachment size limit.</dd>
+        <dd>Maximum attachment size limit (applies globally, independently of the per-category security policy limit).</dd>
 
         <dt><a href="/settings">Re-run setup wizard</a></dt>
-        <dd>At the bottom of the main Settings page. Logs you out and resets the setup flag so you can go through first-time setup again. Your stored emails are not deleted.</dd>
+        <dd>At the bottom of the main Settings page. Logs you out and resets the setup flag so you can re-run first-time configuration. Your stored emails and settings are not deleted.</dd>
       </dl>
     </section>
 
@@ -177,18 +270,18 @@
       <table class="help-table">
         <thead><tr><th>Provider</th><th>Host</th><th>Port</th><th>Mode</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td>Gmail</td><td><code>imap.gmail.com</code></td><td>993</td><td>TLS</td><td>Must enable IMAP in Gmail settings. Requires an App Password if 2-step verification is on.</td></tr>
+          <tr><td>Gmail</td><td><code>imap.gmail.com</code></td><td>993</td><td>TLS</td><td>Enable IMAP in Gmail settings. Requires an App Password if 2-step verification is on.</td></tr>
           <tr><td>Outlook / 365</td><td><code>outlook.office365.com</code></td><td>993</td><td>TLS</td><td>May need to enable IMAP access in Outlook settings first.</td></tr>
           <tr><td>Yahoo</td><td><code>imap.mail.yahoo.com</code></td><td>993</td><td>TLS</td><td>Requires an App Password from Yahoo account security settings.</td></tr>
           <tr><td>iCloud</td><td><code>imap.mail.me.com</code></td><td>993</td><td>TLS</td><td>Requires an App-Specific Password from appleid.apple.com.</td></tr>
           <tr><td>Fastmail</td><td><code>imap.fastmail.com</code></td><td>993</td><td>TLS</td><td>Works with your normal Fastmail password.</td></tr>
-          <tr><td>cPanel / Dovecot</td><td><code>mail.yourdomain.com</code></td><td>993</td><td>TLS</td><td>Use the hostname of your mail server.</td></tr>
+          <tr><td>cPanel / Dovecot</td><td><code>mail.yourdomain.com</code></td><td>993</td><td>TLS</td><td>Use the full hostname of your mail server.</td></tr>
         </tbody>
       </table>
       <h3>Gmail — step by step</h3>
       <ol class="help-steps">
         <li><strong>Enable IMAP</strong> — In Gmail go to Settings (gear icon) → See all settings → Forwarding and POP/IMAP → Enable IMAP → Save changes.</li>
-        <li><strong>Create an App Password</strong> (required if 2-step verification is on) — Go to your Google Account → Security → 2-Step Verification → App passwords. Create one named "EmailStore". Use this password in EmailStore instead of your normal Google password.</li>
+        <li><strong>Create an App Password</strong> (required if 2-step verification is on) — Go to your Google Account → Security → 2-Step Verification → App passwords. Create one named "EmailStore". Use this password instead of your normal Google password.</li>
       </ol>
     </section>
 

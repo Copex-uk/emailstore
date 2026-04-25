@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"emailstore/internal/auth"
 	"emailstore/internal/db"
@@ -290,6 +293,18 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 				log.Printf("settings categories: add rule cat=%s pattern=%q: %v", catID, pattern, err)
 			}
 		}
+	case "set_retain":
+		id := r.FormValue("id")
+		daysStr := r.FormValue("retain_days")
+		if id != "" && daysStr != "" {
+			days, err := strconv.Atoi(daysStr)
+			if err != nil || days < 0 {
+				days = 0
+			}
+			if _, err := h.DB.Exec(`UPDATE categories SET retain_days = ? WHERE id = ?`, days, id); err != nil {
+				log.Printf("settings categories: set retain_days id=%s days=%d: %v", id, days, err)
+			}
+		}
 	case "delete_rule":
 		ruleID := r.FormValue("rule_id")
 		if ruleID != "" {
@@ -385,6 +400,7 @@ func (h *Handler) settingsPolicyGet(w http.ResponseWriter, r *http.Request) {
 		"MaxEmailMB":     s[db.KeySecurityMaxEmailMB],
 		"MaxAttachments": s[db.KeySecurityMaxAttachments],
 		"MaxAttachMB":    s[db.KeySecurityMaxAttachMB],
+		"AllowedSubnets": s[db.KeyAllowedSubnets],
 		"Warning":        warn,
 		"CSRF":           csrf,
 	})
@@ -421,6 +437,21 @@ func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
 	if v := r.FormValue("max_attach_mb"); v != "" {
 		setOrLog(db.KeySecurityMaxAttachMB, v)
 	}
+	// Save allowed subnets — validate each entry before saving
+	subnets := r.FormValue("allowed_subnets")
+	if err := validateSubnets(subnets); err != nil {
+		csrf := auth.NewCSRFToken(w)
+		h.render(w, "settings/policy.html", map[string]any{
+			"Mode": mode, "RequireToken": r.FormValue("require_token") == "on",
+			"TokenLocation": loc, "Tokens": r.FormValue("tokens"),
+			"MaxEmailMB": r.FormValue("max_email_mb"), "MaxAttachments": r.FormValue("max_attachments"),
+			"MaxAttachMB": r.FormValue("max_attach_mb"), "AllowedSubnets": subnets,
+			"Error": "Invalid subnet: " + err.Error(), "CSRF": csrf,
+		})
+		return
+	}
+	setOrLog(db.KeyAllowedSubnets, subnets)
+
 	csrf := auth.NewCSRFToken(w)
 	h.render(w, "settings/policy.html", map[string]any{
 		"Mode":           mode,
@@ -430,7 +461,31 @@ func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
 		"MaxEmailMB":     r.FormValue("max_email_mb"),
 		"MaxAttachments": r.FormValue("max_attachments"),
 		"MaxAttachMB":    r.FormValue("max_attach_mb"),
+		"AllowedSubnets": subnets,
 		"Success":        "Security policy saved",
 		"CSRF":           csrf,
 	})
+}
+
+// validateSubnets checks that every entry in a comma-separated subnet list is
+// a valid CIDR or bare IP. Returns an error describing the first invalid entry.
+func validateSubnets(raw string) error {
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		cidr := part
+		if !strings.Contains(cidr, "/") {
+			if strings.Contains(cidr, ":") {
+				cidr += "/128"
+			} else {
+				cidr += "/32"
+			}
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("%q is not a valid IP or CIDR", part)
+		}
+	}
+	return nil
 }
