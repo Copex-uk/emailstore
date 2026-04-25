@@ -96,7 +96,9 @@ func TestPruneExpiredSessions(t *testing.T) {
 		time.Now().Add(-1*time.Hour).Unix(), // expired 1 hour ago
 	)
 
-	PruneExpiredSessions(sqldb)
+	if err := PruneExpiredSessions(sqldb); err != nil {
+		t.Fatalf("PruneExpiredSessions: %v", err)
+	}
 
 	if !ValidateSession(sqldb, validID) {
 		t.Error("valid session should survive pruning")

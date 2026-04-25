@@ -20,48 +20,79 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
+	log.SetPrefix("emailstore ")
+
 	cfg := config.Load()
 
+	// Fail fast if required configuration is missing or invalid.
+	if cfg.Port == "" {
+		log.Fatal("startup: PORT must not be empty")
+	}
+	if cfg.DataDir == "" {
+		log.Fatal("startup: DATA_DIR must not be empty")
+	}
+
+	log.Printf("starting: bind=%s:%s data=%s", cfg.Host, cfg.Port, cfg.DataDir)
+
+	// Ensure all required directories exist before any further startup work.
 	if err := cfg.EnsureDirs(); err != nil {
-		log.Fatalf("create data dirs: %v", err)
+		log.Fatalf("startup: create data dirs: %v", err)
 	}
 
 	sqldb, err := db.Open(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("open db: %v", err)
+		log.Fatalf("startup: open db: %v", err)
 	}
-	defer sqldb.Close()
+	defer func() {
+		if err := sqldb.Close(); err != nil {
+			log.Printf("shutdown: db close: %v", err)
+		}
+	}()
 
+	// Load and parse all templates once at startup. Any missing or malformed
+	// template is a fatal error — better to fail immediately than serve errors.
 	tmpl, err := loadTemplates()
 	if err != nil {
-		log.Fatalf("load templates: %v", err)
+		log.Fatalf("startup: load templates: %v", err)
 	}
 
-	// Ensure the inbox category always exists — it is the permanent fallback
-	// for uncategorised emails and must never be absent, even after upgrades.
-	sqldb.Exec(
+	// Ensure the inbox category always exists — permanent fallback for
+	// uncategorised emails; must survive upgrades and fresh installs.
+	if _, err := sqldb.Exec(
 		`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,
-	)
+	); err != nil {
+		log.Printf("startup: ensure inbox category: %v", err)
+	}
 
 	h := handler.New(sqldb, tmpl, cfg.AttachDir)
 
-	// Root context — cancelled on shutdown signal
+	// Root context — cancelled on shutdown signal to stop all background goroutines.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start IMAP poller with context for clean shutdown
+	// Background: IMAP poller — respects ctx for clean shutdown.
 	imappoller.StartPoller(ctx, sqldb, cfg.AttachDir)
 
-	// Prune expired sessions every hour
+	// Background: session pruner — runs hourly, exits when ctx is cancelled.
+	// Panics are recovered so a pruner failure cannot affect the HTTP server.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("session pruner: panic recovered: %v", r)
+			}
+		}()
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
+				log.Printf("session pruner: stopping")
 				return
 			case <-t.C:
-				auth.PruneExpiredSessions(sqldb)
+				if err := auth.PruneExpiredSessions(sqldb); err != nil {
+					log.Printf("session pruner: %v", err)
+				}
 			}
 		}
 	}()
@@ -74,31 +105,37 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// Buffered channel so the signal sender is never blocked.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("emailstore listening on http://%s:%s", cfg.Host, cfg.Port)
+		log.Printf("listening on http://%s:%s", cfg.Host, cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server: %v", err)
 		}
 	}()
 
-	<-quit
-	log.Println("shutting down...")
+	// Block until SIGINT or SIGTERM.
+	sig := <-quit
+	log.Printf("received signal %s — shutting down", sig)
 
-	// Cancel context — stops poller and session pruner
+	// Cancel context first — stops poller and session pruner immediately.
 	cancel()
 
-	// Give HTTP server 10s to drain
+	// Give in-flight HTTP requests 10 s to complete before forcing close.
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutCancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
-		log.Printf("shutdown error: %v", err)
+		log.Printf("shutdown: http server: %v", err)
 	}
-	log.Println("stopped")
+
+	log.Printf("shutdown: complete")
 }
 
+// loadTemplates parses all HTML templates once at startup.
+// Relative glob patterns are safe here because the working directory is set
+// by the caller (Docker WORKDIR /app, or the repo root for local dev).
 func loadTemplates() (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"add": func(a, b int) int { return a + b },
@@ -133,14 +170,9 @@ func loadTemplates() (*template.Template, error) {
 	}
 
 	tmpl := template.New("").Funcs(funcMap)
-
-	patterns := []string{
-		"templates/*.html",
-		"templates/settings/*.html",
-	}
-	for _, p := range patterns {
-		if _, err := tmpl.ParseGlob(p); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", p, err)
+	for _, pattern := range []string{"templates/*.html", "templates/settings/*.html"} {
+		if _, err := tmpl.ParseGlob(pattern); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", pattern, err)
 		}
 	}
 	return tmpl, nil

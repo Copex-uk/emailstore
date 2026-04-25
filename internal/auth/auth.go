@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -58,11 +59,14 @@ func ValidateSession(sqldb *sql.DB, id string) bool {
 }
 
 func DeleteSession(sqldb *sql.DB, id string) {
-	sqldb.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	if _, err := sqldb.Exec(`DELETE FROM sessions WHERE id = ?`, id); err != nil {
+		log.Printf("auth: delete session %s: %v", id[:8], err)
+	}
 }
 
-func PruneExpiredSessions(sqldb *sql.DB) {
-	sqldb.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().Unix())
+func PruneExpiredSessions(sqldb *sql.DB) error {
+	_, err := sqldb.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().Unix())
+	return err
 }
 
 func SetCookie(w http.ResponseWriter, sessionID string, timeoutMins int) {

@@ -98,6 +98,13 @@ func (h *Handler) Routes() http.Handler {
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Recover from panics so a single bad request cannot crash the server
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("http panic recovered: %v url=%s", rec, r.URL)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
@@ -198,9 +205,15 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		db.SettingSet(h.DB, db.KeyPasswordHash, hash)
-		db.SettingSet(h.DB, db.KeySessionTimeout, "480")
-		db.SettingSet(h.DB, db.KeyPollInterval, "15")
+		for k, v := range map[string]string{
+			db.KeyPasswordHash:   hash,
+			db.KeySessionTimeout: "480",
+			db.KeyPollInterval:   "15",
+		} {
+			if err := db.SettingSet(h.DB, k, v); err != nil {
+				log.Printf("setup: save %s: %v", k, err)
+			}
+		}
 		http.Redirect(w, r, "/setup?step=mailbox", http.StatusSeeOther)
 	case "mailbox":
 		if host := r.FormValue("host"); host != "" {
@@ -231,13 +244,17 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 		// but NEVER remove inbox — it is the permanent fallback category.
 		for _, cat := range allDefaults {
 			if cat.slug != "inbox" {
-				h.DB.Exec(`DELETE FROM categories WHERE slug = ?`, cat.slug)
+				if _, err := h.DB.Exec(`DELETE FROM categories WHERE slug = ?`, cat.slug); err != nil {
+					log.Printf("setup: delete category %q: %v", cat.slug, err)
+				}
 			}
 		}
 		// Always ensure inbox exists regardless of what was checked
-		h.DB.Exec(
+		if _, err := h.DB.Exec(
 			`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,
-		)
+		); err != nil {
+			log.Printf("setup: ensure inbox: %v", err)
+		}
 		// Insert the other categories the user selected
 		for _, sel := range selected {
 			if sel == "inbox" {
@@ -245,10 +262,12 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, cat := range allDefaults {
 				if sel == cat.slug {
-					h.DB.Exec(
+					if _, err := h.DB.Exec(
 						`INSERT OR IGNORE INTO categories (name, slug, color) VALUES (?, ?, ?)`,
 						cat.name, cat.slug, cat.color,
-					)
+					); err != nil {
+						log.Printf("setup: insert category %q: %v", cat.slug, err)
+					}
 					break
 				}
 			}
@@ -267,10 +286,14 @@ func (h *Handler) setupFinish(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	h.DB.Exec(
+	if _, err := h.DB.Exec(
 		`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,
-	)
-	db.SettingSet(h.DB, db.KeySetupDone, "1")
+	); err != nil {
+		log.Printf("setup finish: ensure inbox: %v", err)
+	}
+	if err := db.SettingSet(h.DB, db.KeySetupDone, "1"); err != nil {
+		log.Printf("setup finish: set setup_done: %v", err)
+	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -428,7 +451,9 @@ func (h *Handler) viewEmail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	email.MarkRead(h.DB, id)
+	if err := email.MarkRead(h.DB, id); err != nil {
+		log.Printf("mark read email_id=%d: %v", id, err)
+	}
 
 	cats, _ := email.ListCategories(h.DB)
 	csrf := auth.NewCSRFToken(w)
@@ -454,7 +479,9 @@ func (h *Handler) setCategory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	email.SetCategory(h.DB, emailID, catID)
+	if err := email.SetCategory(h.DB, emailID, catID); err != nil {
+		log.Printf("set category email_id=%d cat_id=%d: %v", emailID, catID, err)
+	}
 	http.Redirect(w, r, "/emails/"+r.PathValue("id"), http.StatusSeeOther)
 }
 
@@ -484,12 +511,16 @@ func (h *Handler) deleteEmail(w http.ResponseWriter, r *http.Request) {
 
 	// Remove attachment files and their directory from disk
 	for _, p := range paths {
-		os.Remove(p)
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove attachment file %q: %v", p, err)
+		}
 	}
 	if len(paths) > 0 {
-		// Remove the per-email attachment directory if now empty
 		dir := filepath.Dir(paths[0])
-		os.Remove(dir) // only removes if empty
+		// os.Remove only succeeds if directory is empty — that is intentional
+		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove attachment dir %q: %v", dir, err)
+		}
 	}
 
 	log.Printf("event=email_deleted email_id=%d", id)
@@ -515,7 +546,9 @@ func (h *Handler) downloadEmail(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition",
 			mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 		w.Header().Set("Content-Type", "message/rfc822")
-		w.Write(eml)
+		if _, err := w.Write(eml); err != nil {
+			log.Printf("write eml response email_id=%d: %v", e.ID, err)
+		}
 		return
 	}
 
@@ -530,8 +563,10 @@ func (h *Handler) downloadEmail(w http.ResponseWriter, r *http.Request) {
 
 	// Write the email body as a .eml file inside the zip
 	emlWriter, err := zw.Create(fmt.Sprintf("email-%d.eml", e.ID))
-	if err == nil {
-		emlWriter.Write(buildEML(e))
+	if err != nil {
+		log.Printf("zip create eml email_id=%d: %v", e.ID, err)
+	} else if _, err := emlWriter.Write(buildEML(e)); err != nil {
+		log.Printf("zip write eml email_id=%d: %v", e.ID, err)
 	}
 
 	// Write each attachment file
@@ -543,9 +578,12 @@ func (h *Handler) downloadEmail(w http.ResponseWriter, r *http.Request) {
 		}
 		f, err := zw.Create(att.Filename)
 		if err != nil {
+			log.Printf("zip create attachment %q email_id=%d: %v", att.Filename, e.ID, err)
 			continue
 		}
-		f.Write(data)
+		if _, err := f.Write(data); err != nil {
+			log.Printf("zip write attachment %q email_id=%d: %v", att.Filename, e.ID, err)
+		}
 	}
 }
 
