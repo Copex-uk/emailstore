@@ -172,7 +172,7 @@ func SetCategory(db *sql.DB, emailID, categoryID int64) error {
 }
 
 func ListCategories(db *sql.DB) ([]*Category, error) {
-	rows, err := db.Query(`SELECT id, name, slug, color FROM categories ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, slug, color FROM categories ORDER BY CASE slug WHEN 'inbox' THEN 0 ELSE 1 END, name`)
 	if err != nil {
 		return nil, err
 	}

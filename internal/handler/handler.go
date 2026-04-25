@@ -286,7 +286,12 @@ func (h *Handler) loginGet(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) loginPost(w http.ResponseWriter, r *http.Request) {
 	if !auth.ValidateCSRF(r) {
-		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		// The CSRF cookie was missing — most likely the browser hadn't stored it
+		// yet when the form was submitted (race on first page load, or cookie
+		// cleared). Redirect back to GET /login so a fresh token is issued
+		// rather than showing a confusing blank 403 page.
+		log.Printf("event=login_csrf_miss ip=%s", auth.RemoteIP(r))
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 	ip := auth.RemoteIP(r)

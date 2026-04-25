@@ -19,13 +19,29 @@
       </button>
     </div>
     {{if .Error}}<p class="alert alert-error">{{.Error}}</p>{{end}}
-    <form method="POST" action="/login" class="login-form">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <form method="POST" action="/login" class="login-form" id="login-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}" id="csrf-field">
       <label class="field-label">Password
-        <input type="password" name="password" required autofocus class="field-input">
+        <input type="password" name="password" required autofocus class="field-input" id="password-field">
       </label>
       <button type="submit" class="btn btn-primary btn-full">Sign in</button>
     </form>
+    <script>
+    // Ensure the CSRF cookie is confirmed present before allowing submit.
+    // On the very first load the browser may not have written the cookie yet.
+    document.getElementById('login-form').addEventListener('submit', function(e) {
+      var token = document.getElementById('csrf-field').value;
+      var cookie = document.cookie.split(';').some(function(c) {
+        return c.trim().startsWith('es_csrf=');
+      });
+      if (!cookie) {
+        // Cookie not yet visible — reload to get a fresh one, then the user
+        // can submit again. Happens at most once per session.
+        e.preventDefault();
+        window.location.reload();
+      }
+    });
+    </script>
     <p style="margin-top:1rem;font-size:0.85rem;text-align:center;">
       <a href="/reset-password" style="color:var(--primary)">Forgot password?</a>
     </p>
