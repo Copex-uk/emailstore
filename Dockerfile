@@ -9,9 +9,20 @@ RUN go mod download && go mod verify
 
 COPY . .
 
-# Build a fully static binary — no libc, no CGO, no external dependencies
+# Version info injected at build time by CI via --build-arg.
+# Falls back to "dev" / "unknown" for local builds.
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+# Stamp version into the binary via ldflags so it appears in logs and the UI.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w -extldflags=-static" -trimpath -o emailstore .
+    go build \
+      -ldflags="-s -w -extldflags=-static \
+        -X emailstore/internal/version.Version=${VERSION} \
+        -X emailstore/internal/version.Commit=${COMMIT} \
+        -X emailstore/internal/version.BuildTime=${BUILD_TIME}" \
+      -trimpath -o emailstore .
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 # Pin to a specific alpine version for reproducible builds

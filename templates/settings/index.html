@@ -30,6 +30,7 @@
       <a href="/settings/security"   class="settings-card"><h3>Password</h3><p>Login password and session timeout</p></a>
       <a href="/settings/general"    class="settings-card"><h3>General</h3><p>Storage and attachment limits</p></a>
     </div>
+  {{if .Version}}<p class="version-label" style="margin-top:2rem">{{.Version}}</p>{{end}}
   </main>
 </div>
 <script src="/static/theme.js"></script>

@@ -31,6 +31,7 @@
       <form method="POST" action="/logout">
         <button class="btn-link">Sign out</button>
       </form>
+      {{if .Version}}<div class="version-label">{{.Version}}</div>{{end}}
     </div>
   </nav>
   <main class="email-list">

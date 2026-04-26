@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	ver "emailstore/internal/version"
+
 	"emailstore/internal/auth"
 	"emailstore/internal/db"
 	"emailstore/internal/email"
@@ -15,7 +17,10 @@ import (
 
 func (h *Handler) settingsIndex(w http.ResponseWriter, r *http.Request) {
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/index.html", map[string]any{"CSRF": csrf})
+	h.renderV(w, "settings/index.html", map[string]any{
+		"CSRF":    csrf,
+		"Version": ver.String(),
+	})
 }
 
 // ── Security ──────────────────────────────────────────────────────────────
@@ -23,7 +28,7 @@ func (h *Handler) settingsIndex(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) settingsSecurityGet(w http.ResponseWriter, r *http.Request) {
 	timeout, _ := db.SettingGet(h.DB, db.KeySessionTimeout)
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/security.html", map[string]any{
+	h.renderV(w, "settings/security.html", map[string]any{
 		"SessionTimeout": timeout,
 		"CSRF":           csrf,
 	})
@@ -42,21 +47,21 @@ func (h *Handler) settingsSecurityPost(w http.ResponseWriter, r *http.Request) {
 		current := r.FormValue("current_password")
 		hash, _ := db.SettingGet(h.DB, db.KeyPasswordHash)
 		if !auth.CheckPassword(hash, current) {
-			h.render(w, "settings/security.html", map[string]any{
+			h.renderV(w, "settings/security.html", map[string]any{
 				"Error": "Current password is incorrect",
 				"CSRF":  csrf,
 			})
 			return
 		}
 		if len(newPassword) < 8 {
-			h.render(w, "settings/security.html", map[string]any{
+			h.renderV(w, "settings/security.html", map[string]any{
 				"Error": "Password must be at least 8 characters",
 				"CSRF":  csrf,
 			})
 			return
 		}
 		if newPassword != confirm {
-			h.render(w, "settings/security.html", map[string]any{
+			h.renderV(w, "settings/security.html", map[string]any{
 				"Error": "Passwords do not match",
 				"CSRF":  csrf,
 			})
@@ -82,7 +87,7 @@ func (h *Handler) settingsSecurityPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.render(w, "settings/security.html", map[string]any{
+	h.renderV(w, "settings/security.html", map[string]any{
 		"Success":        "Settings saved",
 		"SessionTimeout": r.FormValue("session_timeout"),
 		"CSRF":           csrf,
@@ -106,7 +111,7 @@ func (h *Handler) settingsMailboxGet(w http.ResponseWriter, r *http.Request) {
 		mode = "starttls"
 	}
 
-	h.render(w, "settings/mailbox.html", map[string]any{
+	h.renderV(w, "settings/mailbox.html", map[string]any{
 		"Host":         s[db.KeyIMAPHost],
 		"Port":         s[db.KeyIMAPPort],
 		"User":         s[db.KeyIMAPUser],
@@ -143,7 +148,7 @@ func (h *Handler) settingsMailboxPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/mailbox.html", map[string]any{
+	h.renderV(w, "settings/mailbox.html", map[string]any{
 		"Host":         r.FormValue("host"),
 		"Port":         r.FormValue("port"),
 		"User":         r.FormValue("user"),
@@ -192,7 +197,7 @@ func (h *Handler) settingsSendersGet(w http.ResponseWriter, r *http.Request) {
 		log.Printf("settings senders: rows error: %v", err)
 	}
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/senders.html", map[string]any{
+	h.renderV(w, "settings/senders.html", map[string]any{
 		"Senders": senders,
 		"CSRF":    csrf,
 	})
@@ -238,7 +243,7 @@ func (h *Handler) settingsCategoriesGet(w http.ResponseWriter, r *http.Request) 
 		log.Printf("settings categories: list: %v", err)
 	}
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/categories.html", map[string]any{
+	h.renderV(w, "settings/categories.html", map[string]any{
 		"Categories": cats,
 		"CSRF":       csrf,
 	})
@@ -355,7 +360,7 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 func (h *Handler) settingsGeneralGet(w http.ResponseWriter, r *http.Request) {
 	maxBytes, _ := db.SettingGet(h.DB, db.KeyMaxAttachBytes)
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/general.html", map[string]any{
+	h.renderV(w, "settings/general.html", map[string]any{
 		"MaxAttachMB": bytesToMB(maxBytes),
 		"CSRF":        csrf,
 	})
@@ -374,7 +379,7 @@ func (h *Handler) settingsGeneralPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/general.html", map[string]any{
+	h.renderV(w, "settings/general.html", map[string]any{
 		"MaxAttachMB": r.FormValue("max_attach_mb"),
 		"Success":     "Settings saved",
 		"CSRF":        csrf,
@@ -426,7 +431,7 @@ func (h *Handler) settingsPolicyGet(w http.ResponseWriter, r *http.Request) {
 		warn = "Token authentication is required but no tokens are configured. All emails will be rejected until you add at least one token, or switch to Relaxed mode."
 	}
 
-	h.render(w, "settings/policy.html", map[string]any{
+	h.renderV(w, "settings/policy.html", map[string]any{
 		"Mode":           mode,
 		"RequireToken":   requireToken,
 		"TokenLocation":  s[db.KeySecurityTokenLocation],
@@ -475,7 +480,7 @@ func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
 	subnets := r.FormValue("allowed_subnets")
 	if err := validateSubnets(subnets); err != nil {
 		csrf := auth.NewCSRFToken(w)
-		h.render(w, "settings/policy.html", map[string]any{
+		h.renderV(w, "settings/policy.html", map[string]any{
 			"Mode": mode, "RequireToken": r.FormValue("require_token") == "on",
 			"TokenLocation": loc, "Tokens": r.FormValue("tokens"),
 			"MaxEmailMB": r.FormValue("max_email_mb"), "MaxAttachments": r.FormValue("max_attachments"),
@@ -487,7 +492,7 @@ func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
 	setOrLog(db.KeyAllowedSubnets, subnets)
 
 	csrf := auth.NewCSRFToken(w)
-	h.render(w, "settings/policy.html", map[string]any{
+	h.renderV(w, "settings/policy.html", map[string]any{
 		"Mode":           mode,
 		"RequireToken":   r.FormValue("require_token") == "on",
 		"TokenLocation":  loc,

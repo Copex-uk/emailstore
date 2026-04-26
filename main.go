@@ -17,6 +17,7 @@ import (
 	"emailstore/internal/email"
 	"emailstore/internal/handler"
 	imappoller "emailstore/internal/imap"
+	"emailstore/internal/version"
 )
 
 func main() {
@@ -33,7 +34,7 @@ func main() {
 		log.Fatal("startup: DATA_DIR must not be empty")
 	}
 
-	log.Printf("starting: bind=%s:%s data=%s", cfg.Host, cfg.Port, cfg.DataDir)
+	log.Printf("starting: version=%s bind=%s:%s data=%s", version.String(), cfg.Host, cfg.Port, cfg.DataDir)
 
 	// Ensure all required directories exist before any further startup work.
 	if err := cfg.EnsureDirs(); err != nil {

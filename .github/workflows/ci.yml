@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags:     ['v*']
+    tags:     ['v*.*.*']
   pull_request:
     branches: [main]
 
@@ -23,12 +23,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Ensure go.sum is present and up to date
+      - name: Ensure go.sum is up to date
         run: |
           go mod tidy
           git diff --exit-code go.sum || {
-            echo "go.sum was missing or out of date — it has been regenerated."
-            echo "Please run 'go mod tidy' locally and commit go.sum."
+            echo "go.sum is out of date — run 'go mod tidy' locally and commit it"
             exit 1
           }
 
@@ -54,6 +53,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Resolve version string:
+      #   - on a version tag (v1.2.3) → "v1.2.3"
+      #   - on main branch push       → "dev-<short-sha>"
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "version=${VERSION}"   >> $GITHUB_OUTPUT
+          echo "commit=${COMMIT}"     >> $GITHUB_OUTPUT
+          echo "build_time=${BUILD_TIME}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}  Commit: ${COMMIT}  Built: ${BUILD_TIME}"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -61,14 +78,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract Docker metadata (tags and labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
+            # :latest on main branch pushes
             type=raw,value=latest,enable={{is_default_branch}}
+            # :v1.2.3 and :v1.2 on version tags
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # :sha-abc1234 for every push (traceability)
             type=sha,prefix=sha-,format=short
 
       - uses: docker/setup-buildx-action@v3
@@ -80,6 +101,60 @@ jobs:
           push: true
           tags:   ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Pass version info as build args — picked up in Dockerfile
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            COMMIT=${{ steps.ver.outputs.commit }}
+            BUILD_TIME=${{ steps.ver.outputs.build_time }}
           cache-from: type=gha
           cache-to:   type=gha,mode=max
           platforms: linux/amd64,linux/arm64
+
+  # ── Job 3: GitHub Release (on version tags only) ─────────────────────────
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    needs: [test, docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for changelog generation
+
+      - name: Generate changelog from commits since last tag
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+          # Collect conventional commit messages grouped by type
+          NOTES=$(git log ${RANGE} --pretty=format:"- %s" --no-merges | head -50)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES"     >> $GITHUB_OUTPUT
+          echo "EOF"        >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: EmailStore ${{ github.ref_name }}
+          body: |
+            ## What's changed
+
+            ${{ steps.changelog.outputs.notes }}
+
+            ---
+
+            **Docker image:** `ghcr.io/${{ github.repository_owner }}/emailstore:${{ github.ref_name }}`
+
+            ```bash
+            # Update to this version
+            docker compose pull && docker compose up -d
+            ```
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

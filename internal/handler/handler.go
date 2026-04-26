@@ -18,6 +18,7 @@ import (
 	"emailstore/internal/db"
 	"emailstore/internal/email"
 	imappoller "emailstore/internal/imap"
+	"emailstore/internal/version"
 )
 
 type Handler struct {
@@ -114,6 +115,19 @@ func securityHeaders(next http.Handler) http.Handler {
 			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// renderV is identical to render but automatically merges the current version
+// string into the template data map so every template can show it.
+// Templates that already set "Version" explicitly are not overwritten.
+func (h *Handler) renderV(w http.ResponseWriter, name string, data map[string]any) {
+	if data == nil {
+		data = map[string]any{}
+	}
+	if _, ok := data["Version"]; !ok {
+		data["Version"] = version.String()
+	}
+	h.render(w, name, data)
 }
 
 func (h *Handler) render(w http.ResponseWriter, name string, data any) {
@@ -439,6 +453,7 @@ func (h *Handler) inbox(w http.ResponseWriter, r *http.Request) {
 		"Page":          page,
 		"Polled":        r.URL.Query().Get("polled") == "1",
 		"CSRF":          auth.NewCSRFToken(w),
+		"Version":       version.String(),
 	})
 }
 

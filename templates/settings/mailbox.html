@@ -18,7 +18,7 @@
       <li><a href="/settings/security" class="nav-item">Password & session</a></li>
       <li><a href="/settings/general" class="nav-item">General</a></li>
     </ul>
-    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a></div>
+    <div class="sidebar-footer"><a href="/" class="nav-item">← Inbox</a>{{if .Version}}<div class="version-label">{{.Version}}</div>{{end}}</div>
   </nav>
   <main class="settings-main">
     <h1>Mailbox connection</h1>
