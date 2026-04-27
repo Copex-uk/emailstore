@@ -95,7 +95,7 @@
       <span class="wizard-step active">3 Categories</span>
     </div>
     <h1>Default categories</h1>
-    <p class="field-hint">Choose which default categories to create. You can add and delete categories at any time in Settings.</p>
+    <p class="field-hint">Tick the categories you want to start with — Inbox is always created. You can add, rename, and delete categories at any time in Settings.</p>
     <form method="POST" action="/setup">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <input type="hidden" name="step" value="categories">
@@ -115,8 +115,8 @@
         {{end}}
       </div>
       <div class="wizard-actions">
-        <button type="submit" class="btn btn-primary">Finish setup →</button>
-        <a href="/setup/finish" class="btn">Skip — no categories</a>
+        <button type="submit" class="btn btn-primary">Use selected categories →</button>
+        <a href="/setup/finish" class="btn">Inbox only</a>
       </div>
     </form>
     {{end}}

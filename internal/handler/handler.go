@@ -296,11 +296,18 @@ func (h *Handler) setupPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) setupFinish(w http.ResponseWriter, r *http.Request) {
-	// Skipping categories — still ensure inbox always exists as the fallback
+	// "Inbox only" path — remove all migration-seeded defaults except inbox,
+	// then mark setup done. The migration seeds categories when the table is
+	// empty at startup, so they exist by the time the wizard runs.
 	done, _ := db.SettingGet(h.DB, db.KeySetupDone)
 	if done == "1" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
+	}
+	for _, slug := range []string{"work", "personal", "finance", "other"} {
+		if _, err := h.DB.Exec(`DELETE FROM categories WHERE slug = ?`, slug); err != nil {
+			log.Printf("setup finish: delete category %q: %v", slug, err)
+		}
 	}
 	if _, err := h.DB.Exec(
 		`INSERT OR IGNORE INTO categories (name, slug, color) VALUES ('Inbox', 'inbox', '#6366f1')`,

@@ -41,6 +41,7 @@ func (h *Handler) settingsSecurityPost(w http.ResponseWriter, r *http.Request) {
 	}
 	csrf := auth.NewCSRFToken(w)
 
+	// ── Password change ────────────────────────────────────────────────
 	newPassword := r.FormValue("new_password")
 	if newPassword != "" {
 		confirm := r.FormValue("confirm_password")
@@ -48,48 +49,65 @@ func (h *Handler) settingsSecurityPost(w http.ResponseWriter, r *http.Request) {
 		hash, _ := db.SettingGet(h.DB, db.KeyPasswordHash)
 		if !auth.CheckPassword(hash, current) {
 			h.renderV(w, "settings/security.html", map[string]any{
-				"Error": "Current password is incorrect",
-				"CSRF":  csrf,
+				"Error":          "Current password is incorrect",
+				"SessionTimeout": r.FormValue("session_timeout"),
+				"CSRF":           csrf,
 			})
 			return
 		}
 		if len(newPassword) < 8 {
 			h.renderV(w, "settings/security.html", map[string]any{
-				"Error": "Password must be at least 8 characters",
-				"CSRF":  csrf,
+				"Error":          "New password must be at least 8 characters",
+				"SessionTimeout": r.FormValue("session_timeout"),
+				"CSRF":           csrf,
 			})
 			return
 		}
 		if newPassword != confirm {
 			h.renderV(w, "settings/security.html", map[string]any{
-				"Error": "Passwords do not match",
-				"CSRF":  csrf,
+				"Error":          "New passwords do not match",
+				"SessionTimeout": r.FormValue("session_timeout"),
+				"CSRF":           csrf,
 			})
 			return
 		}
 		newHash, err := auth.HashPassword(newPassword)
 		if err != nil {
+			log.Printf("settings security: hash password: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if err := db.SettingSet(h.DB, db.KeyPasswordHash, newHash); err != nil {
-			log.Printf("settings: save password hash: %v", err)
+			log.Printf("settings security: save password hash: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	if t := r.FormValue("session_timeout"); t != "" {
-		if n, err := strconv.Atoi(t); err == nil && n > 0 {
-			if err := db.SettingSet(h.DB, db.KeySessionTimeout, strconv.Itoa(n)); err != nil {
-				log.Printf("settings: save session timeout: %v", err)
-			}
+	// ── Session timeout ───────────────────────────────────────────────
+	timeoutStr := r.FormValue("session_timeout")
+	if timeoutStr != "" {
+		n, err := strconv.Atoi(timeoutStr)
+		if err != nil || n <= 0 {
+			// Reload saved value so form shows what is actually stored
+			saved, _ := db.SettingGet(h.DB, db.KeySessionTimeout)
+			h.renderV(w, "settings/security.html", map[string]any{
+				"Error":          "Session timeout must be a positive number of minutes",
+				"SessionTimeout": saved,
+				"CSRF":           csrf,
+			})
+			return
+		}
+		if err := db.SettingSet(h.DB, db.KeySessionTimeout, strconv.Itoa(n)); err != nil {
+			log.Printf("settings security: save session timeout: %v", err)
 		}
 	}
 
+	// Re-read from DB so the rendered form always reflects what was actually saved
+	savedTimeout, _ := db.SettingGet(h.DB, db.KeySessionTimeout)
 	h.renderV(w, "settings/security.html", map[string]any{
 		"Success":        "Settings saved",
-		"SessionTimeout": r.FormValue("session_timeout"),
+		"SessionTimeout": savedTimeout,
 		"CSRF":           csrf,
 	})
 }
@@ -103,14 +121,7 @@ func (h *Handler) settingsMailboxGet(w http.ResponseWriter, r *http.Request) {
 		s = map[string]string{}
 	}
 	csrf := auth.NewCSRFToken(w)
-
-	mode := "plain"
-	if s[db.KeyIMAPTLS] == "1" {
-		mode = "tls"
-	} else if s[db.KeyIMAPStartTLS] == "1" {
-		mode = "starttls"
-	}
-
+	mode := imapMode(s)
 	h.renderV(w, "settings/mailbox.html", map[string]any{
 		"Host":         s[db.KeyIMAPHost],
 		"Port":         s[db.KeyIMAPPort],
@@ -133,31 +144,57 @@ func (h *Handler) settingsMailboxPost(w http.ResponseWriter, r *http.Request) {
 			log.Printf("settings mailbox: set %s: %v", key, err)
 		}
 	}
-	setOrLog(db.KeyIMAPHost, r.FormValue("host"))
-	setOrLog(db.KeyIMAPPort, r.FormValue("port"))
-	setOrLog(db.KeyIMAPUser, r.FormValue("user"))
+
+	setOrLog(db.KeyIMAPHost, strings.TrimSpace(r.FormValue("host")))
+	setOrLog(db.KeyIMAPPort, strings.TrimSpace(r.FormValue("port")))
+	setOrLog(db.KeyIMAPUser, strings.TrimSpace(r.FormValue("user")))
 	if p := r.FormValue("password"); p != "" {
 		setOrLog(db.KeyIMAPPassword, p)
 	}
 	mode := r.FormValue("mode")
+	if mode != "tls" && mode != "starttls" && mode != "plain" {
+		mode = "tls" // safe default
+	}
 	setOrLog(db.KeyIMAPTLS, boolStr(mode == "tls"))
 	setOrLog(db.KeyIMAPStartTLS, boolStr(mode == "starttls"))
 	setOrLog(db.KeyIMAPDebug, boolStr(r.FormValue("debug") == "on"))
-	if interval := r.FormValue("poll_interval"); interval != "" {
-		setOrLog(db.KeyPollInterval, interval)
+
+	if interval := strings.TrimSpace(r.FormValue("poll_interval")); interval != "" {
+		if n, err := strconv.Atoi(interval); err == nil && n > 0 {
+			setOrLog(db.KeyPollInterval, strconv.Itoa(n))
+		} else {
+			log.Printf("settings mailbox: invalid poll_interval %q", interval)
+		}
 	}
 
+	// Re-read from DB so the form always shows what is actually persisted
+	s, err := db.SettingGetAll(h.DB)
+	if err != nil {
+		log.Printf("settings mailbox: reload after save: %v", err)
+		s = map[string]string{}
+	}
 	csrf := auth.NewCSRFToken(w)
 	h.renderV(w, "settings/mailbox.html", map[string]any{
-		"Host":         r.FormValue("host"),
-		"Port":         r.FormValue("port"),
-		"User":         r.FormValue("user"),
-		"Mode":         mode,
-		"PollInterval": r.FormValue("poll_interval"),
-		"Debug":        r.FormValue("debug") == "on",
+		"Host":         s[db.KeyIMAPHost],
+		"Port":         s[db.KeyIMAPPort],
+		"User":         s[db.KeyIMAPUser],
+		"Mode":         imapMode(s),
+		"PollInterval": s[db.KeyPollInterval],
+		"Debug":        s[db.KeyIMAPDebug] == "1",
 		"Success":      "Mailbox settings saved",
 		"CSRF":         csrf,
 	})
+}
+
+// imapMode derives the radio-button mode value from stored TLS/StartTLS flags.
+func imapMode(s map[string]string) string {
+	if s[db.KeyIMAPTLS] == "1" {
+		return "tls"
+	}
+	if s[db.KeyIMAPStartTLS] == "1" {
+		return "starttls"
+	}
+	return "plain"
 }
 
 func boolStr(b bool) string {
@@ -208,8 +245,8 @@ func (h *Handler) settingsSendersPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	emailAddr := r.FormValue("email")
-	name := r.FormValue("name")
+	emailAddr := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	name := strings.TrimSpace(r.FormValue("name"))
 	if emailAddr != "" {
 		if _, err := h.DB.Exec(
 			`INSERT OR IGNORE INTO allowed_senders (email, name) VALUES (?, ?)`,
@@ -257,13 +294,17 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 	action := r.FormValue("action")
 	switch action {
 	case "add":
-		name := r.FormValue("name")
+		name := strings.TrimSpace(r.FormValue("name"))
 		color := r.FormValue("color")
 		if color == "" {
 			color = "#6366f1"
 		}
 		if name != "" {
 			slug := toSlug(name)
+			if slug == "" {
+				log.Printf("settings categories: add %q: slug is empty after conversion", name)
+				break
+			}
 			if _, err := h.DB.Exec(
 				`INSERT OR IGNORE INTO categories (name, slug, color) VALUES (?, ?, ?)`,
 				name, slug, color,
@@ -274,13 +315,13 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 	case "delete":
 		id := r.FormValue("id")
 		if id != "" {
-			// Protect inbox — it is the permanent fallback for uncategorised emails.
 			var slug string
 			if err := h.DB.QueryRow(`SELECT slug FROM categories WHERE id = ?`, id).Scan(&slug); err != nil {
 				log.Printf("settings categories: lookup id=%s: %v", id, err)
 				break
 			}
 			if slug == "inbox" {
+				// Inbox is the permanent fallback category — never delete it
 				break
 			}
 			if _, err := h.DB.Exec(`DELETE FROM categories WHERE id = ?`, id); err != nil {
@@ -289,7 +330,7 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 		}
 	case "add_rule":
 		catID := r.FormValue("category_id")
-		pattern := r.FormValue("pattern")
+		pattern := strings.TrimSpace(r.FormValue("pattern"))
 		if catID != "" && pattern != "" {
 			if _, err := h.DB.Exec(
 				`INSERT INTO category_rules (category_id, pattern) VALUES (?, ?)`,
@@ -300,10 +341,11 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 		}
 	case "set_retain":
 		id := r.FormValue("id")
-		daysStr := r.FormValue("retain_days")
+		daysStr := strings.TrimSpace(r.FormValue("retain_days"))
 		if id != "" && daysStr != "" {
 			days, err := strconv.Atoi(daysStr)
 			if err != nil || days < 0 {
+				log.Printf("settings categories: invalid retain_days %q for id=%s", daysStr, id)
 				days = 0
 			}
 			if _, err := h.DB.Exec(`UPDATE categories SET retain_days = ? WHERE id = ?`, days, id); err != nil {
@@ -312,31 +354,34 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 		}
 	case "edit":
 		id := r.FormValue("id")
-		name := r.FormValue("name")
+		name := strings.TrimSpace(r.FormValue("name"))
 		color := r.FormValue("color")
-		if id == "" || name == "" {
+		if id == "" {
 			break
 		}
-		// Protect inbox name — allow color change but not rename
+		if color == "" {
+			color = "#6366f1"
+		}
 		var slug string
 		if err := h.DB.QueryRow(`SELECT slug FROM categories WHERE id = ?`, id).Scan(&slug); err != nil {
 			log.Printf("settings categories: edit lookup id=%s: %v", id, err)
 			break
 		}
 		if slug == "inbox" {
-			// Inbox: allow color change only, ignore name change
-			if color == "" {
-				color = "#6366f1"
-			}
+			// Inbox: colour change only — name and slug are fixed
 			if _, err := h.DB.Exec(`UPDATE categories SET color = ? WHERE id = ?`, color, id); err != nil {
 				log.Printf("settings categories: edit inbox color id=%s: %v", id, err)
 			}
 		} else {
-			if color == "" {
-				color = "#6366f1"
+			if name == "" {
+				log.Printf("settings categories: edit id=%s: empty name rejected", id)
+				break
 			}
-			// Regenerate slug from new name
 			newSlug := toSlug(name)
+			if newSlug == "" {
+				log.Printf("settings categories: edit id=%s name=%q: slug is empty", id, name)
+				break
+			}
 			if _, err := h.DB.Exec(
 				`UPDATE categories SET name = ?, slug = ?, color = ? WHERE id = ?`,
 				name, newSlug, color, id,
@@ -350,6 +395,10 @@ func (h *Handler) settingsCategoriesPost(w http.ResponseWriter, r *http.Request)
 			if _, err := h.DB.Exec(`DELETE FROM category_rules WHERE id = ?`, ruleID); err != nil {
 				log.Printf("settings categories: delete rule id=%s: %v", ruleID, err)
 			}
+		}
+	default:
+		if action != "" {
+			log.Printf("settings categories: unknown action %q", action)
 		}
 	}
 	http.Redirect(w, r, "/settings/categories", http.StatusSeeOther)
@@ -371,45 +420,30 @@ func (h *Handler) settingsGeneralPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if mb := r.FormValue("max_attach_mb"); mb != "" {
-		if n, err := strconv.ParseInt(mb, 10, 64); err == nil && n > 0 {
-			if err := db.SettingSet(h.DB, db.KeyMaxAttachBytes, strconv.FormatInt(n*1024*1024, 10)); err != nil {
-				log.Printf("settings general: save max_attach_mb: %v", err)
-			}
+	csrf := auth.NewCSRFToken(w)
+	if mb := strings.TrimSpace(r.FormValue("max_attach_mb")); mb != "" {
+		n, err := strconv.ParseInt(mb, 10, 64)
+		if err != nil || n <= 0 {
+			// Re-read saved value so form shows what is actually stored
+			saved, _ := db.SettingGet(h.DB, db.KeyMaxAttachBytes)
+			h.renderV(w, "settings/general.html", map[string]any{
+				"Error":       "Max attachment size must be a positive number",
+				"MaxAttachMB": bytesToMB(saved),
+				"CSRF":        csrf,
+			})
+			return
+		}
+		if err := db.SettingSet(h.DB, db.KeyMaxAttachBytes, strconv.FormatInt(n*1024*1024, 10)); err != nil {
+			log.Printf("settings general: save max_attach_mb: %v", err)
 		}
 	}
-	csrf := auth.NewCSRFToken(w)
+	// Re-read from DB so form always shows what is actually persisted
+	saved, _ := db.SettingGet(h.DB, db.KeyMaxAttachBytes)
 	h.renderV(w, "settings/general.html", map[string]any{
-		"MaxAttachMB": r.FormValue("max_attach_mb"),
+		"MaxAttachMB": bytesToMB(saved),
 		"Success":     "Settings saved",
 		"CSRF":        csrf,
 	})
-}
-
-func toSlug(s string) string {
-	slug := ""
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z':
-			slug += string(c)
-		case c >= 'A' && c <= 'Z':
-			slug += string(rune(c + 32))
-		case c == ' ' || c == '-' || c == '_':
-			slug += "-"
-		}
-	}
-	return slug
-}
-
-func bytesToMB(s string) string {
-	if s == "" {
-		return "25"
-	}
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return "25"
-	}
-	return strconv.FormatInt(n/1024/1024, 10)
 }
 
 // ── Security policy ───────────────────────────────────────────────────────
@@ -420,8 +454,89 @@ func (h *Handler) settingsPolicyGet(w http.ResponseWriter, r *http.Request) {
 		log.Printf("settings policy: load settings: %v", err)
 		s = map[string]string{}
 	}
-	csrf := auth.NewCSRFToken(w)
+	h.renderV(w, "settings/policy.html", policyData(s, auth.NewCSRFToken(w), "", ""))
+}
 
+func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
+	if !auth.ValidateCSRF(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	csrf := auth.NewCSRFToken(w)
+	setOrLog := func(key, val string) {
+		if err := db.SettingSet(h.DB, key, val); err != nil {
+			log.Printf("settings policy: set %s: %v", key, err)
+		}
+	}
+
+	// ── Mode ───────────────────────────────────────────────────────────
+	mode := r.FormValue("mode")
+	if mode != "strict" && mode != "balanced" && mode != "relaxed" {
+		mode = "relaxed" // safe default
+	}
+	setOrLog(db.KeySecurityMode, mode)
+
+	// ── Token settings ─────────────────────────────────────────────────
+	setOrLog(db.KeySecurityRequireToken, boolStr(r.FormValue("require_token") == "on"))
+	loc := r.FormValue("token_location")
+	if loc != "subject" && loc != "header" {
+		loc = "subject"
+	}
+	setOrLog(db.KeySecurityTokenLocation, loc)
+	setOrLog(db.KeySecurityTokens, strings.TrimSpace(r.FormValue("tokens")))
+
+	// ── Size limits — always save, use defaults if blank ───────────────
+	maxEmailMB := strings.TrimSpace(r.FormValue("max_email_mb"))
+	if maxEmailMB == "" {
+		maxEmailMB = "10"
+	}
+	if n, err := strconv.ParseInt(maxEmailMB, 10, 64); err != nil || n <= 0 {
+		maxEmailMB = "10"
+	}
+	setOrLog(db.KeySecurityMaxEmailMB, maxEmailMB)
+
+	maxAttachments := strings.TrimSpace(r.FormValue("max_attachments"))
+	if maxAttachments == "" {
+		maxAttachments = "5"
+	}
+	if n, err := strconv.Atoi(maxAttachments); err != nil || n < 0 {
+		maxAttachments = "5"
+	}
+	setOrLog(db.KeySecurityMaxAttachments, maxAttachments)
+
+	maxAttachMB := strings.TrimSpace(r.FormValue("max_attach_mb"))
+	if maxAttachMB == "" {
+		maxAttachMB = "5"
+	}
+	if n, err := strconv.ParseInt(maxAttachMB, 10, 64); err != nil || n <= 0 {
+		maxAttachMB = "5"
+	}
+	setOrLog(db.KeySecurityMaxAttachMB, maxAttachMB)
+
+	// ── IP allowlist — validate before saving ─────────────────────────
+	subnets := strings.TrimSpace(r.FormValue("allowed_subnets"))
+	if err := validateSubnets(subnets); err != nil {
+		// Reload all other saved values so the form is accurate
+		s, _ := db.SettingGetAll(h.DB)
+		data := policyData(s, csrf, "Invalid subnet: "+err.Error(), "")
+		h.renderV(w, "settings/policy.html", data)
+		return
+	}
+	setOrLog(db.KeyAllowedSubnets, subnets)
+
+	// Re-read everything from DB so form always reflects what was actually saved
+	s, err := db.SettingGetAll(h.DB)
+	if err != nil {
+		log.Printf("settings policy: reload after save: %v", err)
+		s = map[string]string{}
+	}
+	data := policyData(s, csrf, "", "Security policy saved")
+	h.renderV(w, "settings/policy.html", data)
+}
+
+// policyData builds the template data map for the security policy page,
+// always sourced from the database so the form reflects what was saved.
+func policyData(s map[string]string, csrf, errMsg, successMsg string) map[string]any {
 	mode := s[db.KeySecurityMode]
 	tokens := s[db.KeySecurityTokens]
 	requireToken := s[db.KeySecurityRequireToken] == "1"
@@ -430,8 +545,7 @@ func (h *Handler) settingsPolicyGet(w http.ResponseWriter, r *http.Request) {
 	if requireToken && tokens == "" && (mode == "strict" || mode == "balanced") {
 		warn = "Token authentication is required but no tokens are configured. All emails will be rejected until you add at least one token, or switch to Relaxed mode."
 	}
-
-	h.renderV(w, "settings/policy.html", map[string]any{
+	return map[string]any{
 		"Mode":           mode,
 		"RequireToken":   requireToken,
 		"TokenLocation":  s[db.KeySecurityTokenLocation],
@@ -441,73 +555,39 @@ func (h *Handler) settingsPolicyGet(w http.ResponseWriter, r *http.Request) {
 		"MaxAttachMB":    s[db.KeySecurityMaxAttachMB],
 		"AllowedSubnets": s[db.KeyAllowedSubnets],
 		"Warning":        warn,
+		"Error":          errMsg,
+		"Success":        successMsg,
 		"CSRF":           csrf,
-	})
+	}
 }
 
-func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
-	if !auth.ValidateCSRF(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	setOrLog := func(key, val string) {
-		if err := db.SettingSet(h.DB, key, val); err != nil {
-			log.Printf("settings policy: set %s: %v", key, err)
+func toSlug(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z':
+			b.WriteRune(c)
+		case c >= 'A' && c <= 'Z':
+			b.WriteRune(c + 32)
+		case c == ' ' || c == '-' || c == '_':
+			b.WriteByte('-')
 		}
 	}
-	mode := r.FormValue("mode")
-	if mode != "strict" && mode != "balanced" && mode != "relaxed" {
-		mode = "strict"
-	}
-	setOrLog(db.KeySecurityMode, mode)
-	setOrLog(db.KeySecurityRequireToken, boolStr(r.FormValue("require_token") == "on"))
-	loc := r.FormValue("token_location")
-	if loc != "subject" && loc != "header" {
-		loc = "subject"
-	}
-	setOrLog(db.KeySecurityTokenLocation, loc)
-	setOrLog(db.KeySecurityTokens, r.FormValue("tokens"))
-	if v := r.FormValue("max_email_mb"); v != "" {
-		setOrLog(db.KeySecurityMaxEmailMB, v)
-	}
-	if v := r.FormValue("max_attachments"); v != "" {
-		setOrLog(db.KeySecurityMaxAttachments, v)
-	}
-	if v := r.FormValue("max_attach_mb"); v != "" {
-		setOrLog(db.KeySecurityMaxAttachMB, v)
-	}
-	// Save allowed subnets — validate each entry before saving
-	subnets := r.FormValue("allowed_subnets")
-	if err := validateSubnets(subnets); err != nil {
-		csrf := auth.NewCSRFToken(w)
-		h.renderV(w, "settings/policy.html", map[string]any{
-			"Mode": mode, "RequireToken": r.FormValue("require_token") == "on",
-			"TokenLocation": loc, "Tokens": r.FormValue("tokens"),
-			"MaxEmailMB": r.FormValue("max_email_mb"), "MaxAttachments": r.FormValue("max_attachments"),
-			"MaxAttachMB": r.FormValue("max_attach_mb"), "AllowedSubnets": subnets,
-			"Error": "Invalid subnet: " + err.Error(), "CSRF": csrf,
-		})
-		return
-	}
-	setOrLog(db.KeyAllowedSubnets, subnets)
-
-	csrf := auth.NewCSRFToken(w)
-	h.renderV(w, "settings/policy.html", map[string]any{
-		"Mode":           mode,
-		"RequireToken":   r.FormValue("require_token") == "on",
-		"TokenLocation":  loc,
-		"Tokens":         r.FormValue("tokens"),
-		"MaxEmailMB":     r.FormValue("max_email_mb"),
-		"MaxAttachments": r.FormValue("max_attachments"),
-		"MaxAttachMB":    r.FormValue("max_attach_mb"),
-		"AllowedSubnets": subnets,
-		"Success":        "Security policy saved",
-		"CSRF":           csrf,
-	})
+	// Trim leading/trailing hyphens
+	return strings.Trim(b.String(), "-")
 }
 
-// validateSubnets checks that every entry in a comma-separated subnet list is
-// a valid CIDR or bare IP. Returns an error describing the first invalid entry.
+func bytesToMB(s string) string {
+	if s == "" {
+		return "25"
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return "25"
+	}
+	return strconv.FormatInt(n/1024/1024, 10)
+}
+
 func validateSubnets(raw string) error {
 	for _, part := range strings.Split(raw, ",") {
 		part = strings.TrimSpace(part)
