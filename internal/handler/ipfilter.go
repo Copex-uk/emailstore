@@ -11,47 +11,59 @@ import (
 	"emailstore/internal/db"
 )
 
-// WithIPFilter wraps the entire HTTP handler with an IP allowlist check.
-// It reads the KeyAllowedSubnets setting on every request so changes made
-// in Settings → Security policy apply immediately without a restart.
+// WithIPFilter wraps the entire HTTP handler with IP access controls.
+// Two independent checks run on every request, in order:
 //
-// If the setting is empty all connections are accepted (no restriction).
-// Subnets are a comma-separated list of CIDRs or bare IPs, e.g.:
+//  1. IPv6 block — if KeyDisableIPv6 is "1", any IPv6 source is rejected.
+//  2. Subnet allowlist — if KeyAllowedSubnets is non-empty, the source IP
+//     must match at least one listed CIDR or bare IP.
 //
-//	192.168.1.0/24, 10.0.0.5, 172.16.0.0/12
-//
-// Bare IPs are treated as /32 (IPv4) or /128 (IPv6) host routes.
+// Both settings are read from the database on every request so changes
+// apply immediately without a restart.
+// On a DB read error the filter fails open to avoid locking everyone out.
 func WithIPFilter(sqldb *sql.DB, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := auth.RemoteIP(r)
+		ip := net.ParseIP(clientIP)
+
+		// ── 1. IPv6 block ──────────────────────────────────────────────
+		disableIPv6, err := db.SettingGet(sqldb, db.KeyDisableIPv6)
+		if err != nil {
+			log.Printf("ip_filter: read disable_ipv6 setting: %v", err)
+		}
+		if disableIPv6 == "1" && ip != nil && ip.To4() == nil {
+			// ip.To4() returns nil for genuine IPv6 addresses.
+			// The loopback check (::1) is intentionally included — if IPv6
+			// is disabled the healthcheck should use IPv4 (127.0.0.1).
+			log.Printf("event=ip_filter_reject reason=ipv6_disabled ip=%s url=%s", clientIP, r.URL.Path)
+			http.Error(w, "Forbidden — IPv6 connections are not permitted", http.StatusForbidden)
+			return
+		}
+
+		// ── 2. Subnet allowlist ────────────────────────────────────────
 		raw, err := db.SettingGet(sqldb, db.KeyAllowedSubnets)
 		if err != nil {
-			log.Printf("ip_filter: read setting: %v", err)
-			// Fail open — if we can't read the setting, let the request through
-			// rather than locking everyone out.
+			log.Printf("ip_filter: read allowed_subnets setting: %v", err)
+			// Fail open — cannot read setting, allow through
 			next.ServeHTTP(w, r)
 			return
 		}
 		if raw == "" {
-			// No restriction configured — allow all
+			// No restriction — allow all
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		clientIP := auth.RemoteIP(r)
-		ip := net.ParseIP(clientIP)
 		if ip == nil {
 			log.Printf("event=ip_filter_reject reason=unparseable_ip ip=%q url=%s", clientIP, r.URL.Path)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-
 		for _, subnet := range parseSubnets(raw) {
 			if subnet.Contains(ip) {
 				next.ServeHTTP(w, r)
 				return
 			}
 		}
-
 		log.Printf("event=ip_filter_reject ip=%s url=%s", clientIP, r.URL.Path)
 		http.Error(w, "Forbidden — connection not allowed from your IP address", http.StatusForbidden)
 	})

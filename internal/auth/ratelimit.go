@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -99,15 +100,15 @@ func (rl *RateLimiter) cleanup() {
 	}
 }
 
-// RemoteIP extracts the client IP from a request, respecting X-Forwarded-For
-// only when behind a trusted proxy. For local-only use, r.RemoteAddr is fine.
+// RemoteIP extracts the bare IP address from a request's RemoteAddr.
+// RemoteAddr is always "IP:port" or "[IPv6]:port" — net.SplitHostPort
+// handles both forms correctly, including IPv6 bracket notation like [::1].
 func RemoteIP(r *http.Request) string {
-	// Strip port from RemoteAddr
 	addr := r.RemoteAddr
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[:i]
-		}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// No port present — return as-is (shouldn't happen with Go's HTTP server)
+		return addr
 	}
-	return addr
+	return host
 }

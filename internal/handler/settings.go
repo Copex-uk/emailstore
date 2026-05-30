@@ -523,6 +523,7 @@ func (h *Handler) settingsPolicyPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setOrLog(db.KeyAllowedSubnets, subnets)
+	setOrLog(db.KeyDisableIPv6, boolStr(r.FormValue("disable_ipv6") == "on"))
 
 	// Re-read everything from DB so form always reflects what was actually saved
 	s, err := db.SettingGetAll(h.DB)
@@ -554,6 +555,7 @@ func policyData(s map[string]string, csrf, errMsg, successMsg string) map[string
 		"MaxAttachments": s[db.KeySecurityMaxAttachments],
 		"MaxAttachMB":    s[db.KeySecurityMaxAttachMB],
 		"AllowedSubnets": s[db.KeyAllowedSubnets],
+		"DisableIPv6":    s[db.KeyDisableIPv6] == "1",
 		"Warning":        warn,
 		"Error":          errMsg,
 		"Success":        successMsg,

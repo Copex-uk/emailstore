@@ -12,7 +12,7 @@ package version
 import "fmt"
 
 // Version is the semver release tag, e.g. "v1.0.0".
-var Version = "dev"
+var Version = "v1.1.0"
 
 // Commit is the short git SHA of the build.
 var Commit = "unknown"

@@ -81,6 +81,11 @@
 
       <h2>IP allowlist</h2>
       <p class="muted">Restrict web access to specific IP addresses or subnets. Leave blank to allow connections from any IP. Enter one or more CIDRs or bare IPs, comma-separated.</p>
+      <label class="checkbox-label">
+        <input type="checkbox" name="disable_ipv6" {{if .DisableIPv6}}checked{{end}}>
+        Block IPv6 connections — only allow IPv4
+        <span class="field-hint" style="margin-left:0.5rem;font-weight:400">(applies to the healthcheck too — ensure Docker uses 127.0.0.1 not ::1)</span>
+      </label>
       <label>Allowed subnets
         <input type="text" name="allowed_subnets" value="{{.AllowedSubnets}}"
                placeholder="Allow all — enter subnet/s to restrict">

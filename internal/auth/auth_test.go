@@ -240,8 +240,9 @@ func TestRemoteIP(t *testing.T) {
 		want       string
 	}{
 		{"192.168.1.1:1234", "192.168.1.1"},
-		{"[::1]:8080", "[::1]"},
+		{"[::1]:8080", "::1"},         // brackets stripped — net.ParseIP needs bare IPv6
 		{"10.0.0.1:9999", "10.0.0.1"},
+		{"[2001:db8::1]:443", "2001:db8::1"},
 	}
 	for _, tt := range tests {
 		req := httptest.NewRequest("GET", "/", nil)

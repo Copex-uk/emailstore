@@ -30,6 +30,9 @@ const (
 
 	// IP allowlist — comma-separated CIDRs or bare IPs. Empty = allow all.
 	KeyAllowedSubnets = "allowed_subnets"
+
+	// KeyDisableIPv6 rejects all connections from IPv6 addresses when set to "1".
+	KeyDisableIPv6 = "disable_ipv6"
 )
 
 // SettingGet returns the value for key, or ("", nil) if the key does not exist.

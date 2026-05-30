@@ -2,6 +2,32 @@
 
 All notable changes to EmailStore are documented here.
 
+## [v1.1.0] — 2026-05-30
+
+### Added
+- IPv6 block option — Settings → Security policy → "Block IPv6 connections" rejects all IPv6 source addresses immediately, before any other check
+- Auto-delete retention per category — set days in Settings → Categories or via `[slug:days]` subject tag
+- IP allowlist — restrict web access to specific subnets (Settings → Security policy)
+- Category editing — rename and recolour categories inline
+- Version stamping — version, commit SHA, and build time baked into the binary at build and shown in the UI
+
+### Changed
+- Default security policy changed to **Relaxed** (sender allowlist only) for easier initial setup
+- Inbox category is now protected — cannot be deleted or renamed
+- IMAP polling switched to UID-based fetch and delete — fixes sequence number renumbering with Dovecot
+- All database errors now logged explicitly (no more silent failures)
+- HTTP server now recovers from panics gracefully
+- Settings pages now always re-read from DB after save so form reflects what was actually persisted
+- Healthcheck in Dockerfile and docker-compose changed to use `127.0.0.1` instead of `localhost` to avoid IPv6 loopback noise
+
+### Fixed
+- `RemoteIP` now uses `net.SplitHostPort` — correctly strips brackets from IPv6 addresses like `[::1]`
+- CSRF cookie uses no SameSite attribute — fixes login failures on LAN IPs over plain HTTP
+- Setup wizard "Inbox only" path now properly removes migration-seeded default categories
+- Subnet placeholder text changed to "Allow all — enter subnet/s to restrict"
+
+---
+
 ## [Unreleased]
 
 ### Added
