@@ -94,9 +94,17 @@ func (h *Handler) Routes() http.Handler {
 	// Wrap entire mux with security headers
 	mux.Handle("/", authed)
 
-	// IP filter runs outermost — before security headers, before auth.
-	// This means blocked IPs get a 403 even for the login page.
-	return WithIPFilter(h.DB, securityHeaders(mux))
+	// Build the final handler stack:
+	// /healthz is exempt from IP filtering so Docker healthcheck always works.
+	// Everything else goes through IP filter → security headers → auth.
+	root := http.NewServeMux()
+	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	root.Handle("/", WithIPFilter(h.DB, securityHeaders(mux)))
+	return root
 }
 
 func securityHeaders(next http.Handler) http.Handler {

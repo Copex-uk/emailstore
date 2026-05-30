@@ -74,8 +74,7 @@ go test ./...
 ### First time setup
 
 ```bash
-# 1. Edit docker-compose.yml — replace YOURUSERNAME with your GitHub username
-#    The image is built by GitHub Actions and pushed to ghcr.io/YOURUSERNAME/emailstore
+# 1. The image is built by GitHub Actions and pushed to ghcr.io/copex-uk/emailstore
 
 # 2. Create data directory with correct permissions
 #    (container runs as UID 10001 — this must match)
@@ -98,9 +97,9 @@ go mod tidy          # generates go.sum — must be committed
 git init
 git add .
 git commit -m "initial commit"
-git remote add origin https://github.com/YOURUSERNAME/emailstore.git
+git remote add origin https://github.com/Copex-uk/emailstore.git
 git push -u origin main
-# GitHub Actions runs tests → builds → pushes ghcr.io/YOURUSERNAME/emailstore:latest
+# GitHub Actions runs tests → builds → pushes ghcr.io/copex-uk/emailstore:latest
 ```
 
 ### Updating
